@@ -1,0 +1,53 @@
+# Files and directories to exclude from WordPress.org distribution
+# Used with: wp dist-archive
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Development files
+node_modules
+package.json
+package-lock.json
+composer.json
+composer.lock
+vendor
+
+# Build and config files
+create-zip.sh
+.distignore
+
+# Config files (not permitted in WordPress.org)
+*.ini
+*.ini.example
+site-config.ini
+site-config.ini.example
+export-config.ini
+export-config.ini.example
+
+# Development documentation (keep only readme.txt)
+COLLABORATIVE_EDITING.md
+DEPLOYMENT-GUIDE.md
+GITHUB_OAUTH_SETUP.md
+README.md
+
+# Backup files
+*.bak
+*.tmp
+*.cache
+*.log
+
+# Development scripts
+create-my-submissions-page.php

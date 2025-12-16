@@ -1,17 +1,11 @@
 #!/bin/bash
-# Simple WordPress.org ZIP creator - Only includes required files
+# WordPress.org ZIP creator using WP-CLI dist-archive (recommended)
+# Requires: wp package install wp-cli/dist-archive-command
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")"
 
-zip -r praison-file-content-git.zip praison-file-content-git/ \
-  -x "*.git*" \
-  -x "*.DS_Store" \
-  -x "praison-file-content-git/.gitignore" \
-  -x "praison-file-content-git/create-zip.sh" \
-  -x "praison-file-content-git/create-my-submissions-page.php" \
-  -x "praison-file-content-git/.vscode/*" \
-  -x "praison-file-content-git/site-config.ini" \
-  -x "praison-file-content-git/*.bak"
+# Use wp dist-archive with .distignore file
+wp dist-archive . ../praison-file-content-git.zip --force
 
-echo "✅ ZIP created: praison-file-content-git.zip"
+echo ""
 echo "Ready for WordPress.org submission"

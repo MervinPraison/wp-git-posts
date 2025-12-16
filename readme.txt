@@ -4,7 +4,7 @@ Tags: markdown, git, content-management, file-based, version-control
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.0.5
+Stable tag: 1.0.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -200,6 +200,11 @@ Yes, if Git is available, you can rollback any file to a previous version from t
 
 == Changelog ==
 
+= 1.0.6 =
+* Added .distignore file for WP-CLI wp dist-archive command
+* Updated create-zip.sh to exclude all .ini and .ini.example files
+* Ensures no configuration example files are included in WordPress.org distribution
+
 = 1.0.5 =
 * SECURITY FIX: Properly blocked direct file access in scripts/export-to-markdown.php and create-my-submissions-page.php
 * These files were attempting to load WordPress before checking ABSPATH, which defeated the security check
@@ -245,6 +250,9 @@ Yes, if Git is available, you can rollback any file to a previous version from t
 * Built-in caching system
 
 == Upgrade Notice ==
+
+= 1.0.6 =
+Distribution packaging fix. Ensures .ini.example files are excluded from WordPress.org submissions.
 
 = 1.0.4 =
 WordPress coding standards compliance update. Fixed variable naming conventions.
