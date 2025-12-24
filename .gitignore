@@ -36,3 +36,13 @@ site-config.ini
 export-config.ini
 
 *.bak
+
+# SVN deploy directory (created by publish script)
+.svn-deploy/
+
+# Distribution zip files
+*.zip
+!.wordpress-org/*.zip
+
+# Keep .env.example but ignore .env
+!.env.example

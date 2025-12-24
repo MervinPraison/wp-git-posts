@@ -51,3 +51,18 @@ README.md
 
 # Development scripts
 create-my-submissions-page.php
+
+# CI/CD and automation
+.github
+.gitlab-ci.yml
+.wordpress-org
+scripts/bump-version.sh
+scripts/publish.sh
+
+# Version file (version is in plugin header)
+version.txt
+
+# Environment files
+.env
+.env.example
+.svn-deploy

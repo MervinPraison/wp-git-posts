@@ -1,0 +1,85 @@
+stages:
+  - deploy
+
+variables:
+  PLUGIN_SLUG: praison-file-content-git
+  SVN_REPO: https://plugins.svn.wordpress.org/praison-file-content-git
+
+deploy_to_wordpress:
+  stage: deploy
+  image: ubuntu:22.04
+  only:
+    - tags
+  except:
+    - branches
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq subversion zip unzip curl php-cli php-zip
+    # Install WP-CLI
+    - curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+    - chmod +x wp-cli.phar
+    - mv wp-cli.phar /usr/local/bin/wp
+    - wp --info --allow-root
+    # Install dist-archive command
+    - wp package install wp-cli/dist-archive-command --allow-root
+  script:
+    - |
+      echo "=========================================="
+      echo "  Deploying to WordPress.org SVN"
+      echo "=========================================="
+      
+      # Get version from tag (remove 'v' prefix if present)
+      VERSION=${CI_COMMIT_TAG#v}
+      echo "Version: $VERSION"
+      
+      # Create distribution archive
+      echo "Creating distribution archive..."
+      wp dist-archive . ${PLUGIN_SLUG}.zip --allow-root
+      
+      # Checkout SVN
+      echo "Checking out SVN repository..."
+      svn checkout ${SVN_REPO} svn-deploy --username ${SVN_USERNAME} --password ${SVN_PASSWORD} --non-interactive --quiet
+      
+      # Clear trunk and extract new files
+      echo "Updating trunk..."
+      rm -rf svn-deploy/trunk/*
+      unzip -q ${PLUGIN_SLUG}.zip -d svn-deploy/trunk/
+      
+      # Move files if in subdirectory
+      if [ -d "svn-deploy/trunk/${PLUGIN_SLUG}" ]; then
+        mv svn-deploy/trunk/${PLUGIN_SLUG}/* svn-deploy/trunk/
+        rmdir svn-deploy/trunk/${PLUGIN_SLUG}
+      fi
+      
+      # Copy assets if exists
+      if [ -d ".wordpress-org" ]; then
+        echo "Copying assets..."
+        cp -r .wordpress-org/* svn-deploy/assets/ 2>/dev/null || true
+      fi
+      
+      # SVN operations
+      cd svn-deploy
+      svn add --force trunk/* --auto-props --parents --depth infinity -q 2>/dev/null || true
+      svn add --force assets/* --auto-props --parents --depth infinity -q 2>/dev/null || true
+      svn status | grep '^\!' | awk '{print $2}' | xargs -I {} svn rm {} 2>/dev/null || true
+      
+      # Commit trunk
+      echo "Committing trunk..."
+      svn commit -m "Update to version ${VERSION}" --username ${SVN_USERNAME} --password ${SVN_PASSWORD} --non-interactive
+      
+      # Create tag if doesn't exist
+      if ! svn ls ${SVN_REPO}/tags/${VERSION} --username ${SVN_USERNAME} --password ${SVN_PASSWORD} --non-interactive 2>/dev/null; then
+        echo "Creating tag ${VERSION}..."
+        svn copy trunk tags/${VERSION}
+        svn commit -m "Tagging version ${VERSION}" --username ${SVN_USERNAME} --password ${SVN_PASSWORD} --non-interactive
+      else
+        echo "Tag ${VERSION} already exists, skipping..."
+      fi
+      
+      echo "=========================================="
+      echo "  ✓ Successfully deployed v${VERSION}"
+      echo "=========================================="
+  artifacts:
+    paths:
+      - ${PLUGIN_SLUG}.zip
+    expire_in: 1 week
