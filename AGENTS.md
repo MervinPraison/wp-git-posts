@@ -1,4 +1,4 @@
-# PraisonPressGit - Agent Instructions
+# WP Git Posts - Agent Instructions
 
 Instructions for AI agents working on this project.
 

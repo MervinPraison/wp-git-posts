@@ -1,4 +1,4 @@
-# PraisonPressGit
+# WP Git Posts
 
 Load WordPress content from files without database writes.
 

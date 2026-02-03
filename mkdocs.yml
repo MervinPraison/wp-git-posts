@@ -1,9 +1,9 @@
-site_name: PraisonPressGit
-site_url: https://praisonpressgit.praison.ai
+site_name: WP Git Posts
+site_url: https://wpgit.praison.ai
 site_description: Git-based WordPress content loader - Markdown, JSON, YAML without database writes
 
-repo_name: MervinPraison/PraisonAI-Git-Posts
-repo_url: https://github.com/MervinPraison/PraisonAI-Git-Posts
+repo_name: MervinPraison/wp-git-posts
+repo_url: https://github.com/MervinPraison/wp-git-posts
 
 theme:
   name: material
