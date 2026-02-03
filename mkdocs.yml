@@ -1,0 +1,62 @@
+site_name: PraisonPressGit
+site_url: https://praisonpressgit.praison.ai
+site_description: Git-based WordPress content loader - Markdown, JSON, YAML without database writes
+
+repo_name: MervinPraison/PraisonAI-Git-Posts
+repo_url: https://github.com/MervinPraison/PraisonAI-Git-Posts
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - content.code.annotate
+
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.details
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+  - Features:
+    - File Content: features/file-content.md
+    - Git Integration: features/git-integration.md
+    - Collaborative Editing: features/collaborative.md
+  - Guides:
+    - Deployment: guides/deployment.md
+    - Troubleshooting: guides/troubleshooting.md
+  - AGENTS: AGENTS.md
