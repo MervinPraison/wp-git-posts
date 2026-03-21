@@ -31,49 +31,64 @@ class PostLoader {
      * @return array Array of WP_Post objects
      */
     public function loadPosts($query) {
-        // Build cache key using actual post type
-        // Include slug and post ID to ensure unique keys for different posts
+        $slug           = $query->get('name');
+        $posts_per_page = $query->get('posts_per_page') ?: 10;
+
+        // ── Fast path: single-post slug query ────────────────────────────────────
+        // For archive/search queries we must load everything, but for a single post
+        // we only need ONE file. Check _index.json first (O(1) lookup), then fall
+        // back to full scan only if the index doesn't exist.
+        if ($slug && !$query->get('s')) {
+            $cache_key = CacheManager::getContentKey($this->postType, ['name' => $slug]);
+            $cached    = CacheManager::get($cache_key);
+            if ($cached !== false && is_array($cached)) {
+                $this->setPaginationVars($query, $cached);
+                return $cached['posts'];
+            }
+
+            $posts = $this->loadSinglePost($slug);
+
+            $cache_data = [
+                'posts'         => $posts,
+                'found_posts'   => count($posts),
+                'max_num_pages' => 1,
+            ];
+            CacheManager::set($cache_key, $cache_data, 3600);
+            $this->setPaginationVars($query, $cache_data);
+            return $posts;
+        }
+
+        // ── Normal path: archive / search / paginated query ───────────────────────
         $cache_key = CacheManager::getContentKey($this->postType, [
-            'paged' => $query->get('paged'),
-            'posts_per_page' => $query->get('posts_per_page'),
-            's' => $query->get('s'),
-            'name' => $query->get('name'),  // Slug for single post queries
-            'p' => $query->get('p'),        // Post ID
+            'paged'          => $query->get('paged'),
+            'posts_per_page' => $posts_per_page,
+            's'              => $query->get('s'),
+            'p'              => $query->get('p'),
         ]);
-        
-        // Check cache
+
         $cached = CacheManager::get($cache_key);
         if ($cached !== false && is_array($cached)) {
             $this->setPaginationVars($query, $cached);
             return $cached['posts'];
         }
-        
-        // Load from files
-        $all_posts = $this->loadAllPosts();
-        
-        // Filter based on query
+
+        $all_posts      = $this->loadAllPosts();
         $filtered_posts = $this->filterPosts($all_posts, $query);
-        
-        // Sort by date (newest first)
+
         usort($filtered_posts, function($a, $b) {
             return strtotime($b->post_date) - strtotime($a->post_date);
         });
-        
-        // Apply pagination
+
         $paginated_posts = $this->applyPagination($filtered_posts, $query);
-        
-        // Cache results
+
         $cache_data = [
-            'posts' => $paginated_posts,
-            'found_posts' => count($filtered_posts),
-            'max_num_pages' => ceil(count($filtered_posts) / max(1, $query->get('posts_per_page') ?: 10))
+            'posts'         => $paginated_posts,
+            'found_posts'   => count($filtered_posts),
+            'max_num_pages' => ceil(count($filtered_posts) / max(1, $posts_per_page)),
         ];
-        
         CacheManager::set($cache_key, $cache_data, 3600);
-        
-        // Set pagination vars
         $this->setPaginationVars($query, $cache_data);
-        
+
         return $paginated_posts;
     }
     
@@ -375,6 +390,54 @@ class PostLoader {
      * @param array $args Query arguments
      * @return array Array of WP_Post objects
      */
+    /**
+     * Load a single post by slug.
+     * Checks _index.json first for an O(1) file lookup, then falls back to full scan.
+     *
+     * @param string $slug Post slug
+     * @return array Array with 0 or 1 WP_Post objects
+     */
+    private function loadSinglePost(string $slug): array {
+        $indexFile = $this->postsDir . '/_index.json';
+
+        if (file_exists($indexFile)) {
+            $index = json_decode(file_get_contents($indexFile), true);
+            if (is_array($index)) {
+                foreach ($index as $entry) {
+                    if (isset($entry['slug']) && $entry['slug'] === $slug) {
+                        $post = $this->loadFileFromIndexEntry($entry);
+                        return $post ? [$post] : [];
+                    }
+                }
+                return []; // slug not in index → post doesn't exist
+            }
+        }
+
+        // Fallback: full scan (no _index.json present)
+        $all = $this->loadAllPosts();
+        return array_values(array_filter($all, function($p) use ($slug) {
+            return $p->post_name === $slug;
+        }));
+    }
+
+    /**
+     * Load a single post from its index entry.
+     * Reads only the one .md file referenced by the entry.
+     *
+     * @param array $entry Row from _index.json
+     * @return \WP_Post|null
+     */
+    private function loadFileFromIndexEntry(array $entry): ?\WP_Post {
+        $file = $this->postsDir . '/' . ($entry['file'] ?? '');
+        if (!file_exists($file)) {
+            return null;
+        }
+
+        $content = file_get_contents($file);
+        $parsed  = $this->frontMatterParser->parse($content);
+        return $this->createPostObject($parsed, $file);
+    }
+
     public function getPosts($args = []) {
         $query = new \WP_Query($args);
         return $this->loadAllPosts();

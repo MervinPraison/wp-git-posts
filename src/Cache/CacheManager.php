@@ -106,23 +106,21 @@ class CacheManager {
      */
     public static function getContentKey($type, $params = []) {
         $key_parts = [$type];
-        
-        // Add directory modification time for auto-invalidation
+
+        // Use directory mtime for auto-invalidation — O(1) single syscall.
+        // Linux/macOS update dir mtime whenever a file inside is added, removed, or renamed.
+        // Previously used glob()+array_map('filemtime') which was O(n) — unusable at 100k+ files.
         $dir = PRAISON_CONTENT_DIR . '/' . $type;
-        if (file_exists($dir)) {
-            $files = glob($dir . '/*.md');
-            if (!empty($files)) {
-                $mtimes = array_map('filemtime', $files);
-                $key_parts[] = max($mtimes);
-            }
+        if (is_dir($dir)) {
+            $key_parts[] = filemtime($dir);
         }
-        
+
         // Add query params
         if (!empty($params)) {
             ksort($params);
             $key_parts[] = md5(serialize($params));
         }
-        
+
         return implode('_', $key_parts);
     }
 }
