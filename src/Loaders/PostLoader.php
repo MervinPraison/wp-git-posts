@@ -64,6 +64,8 @@ class PostLoader {
             'posts_per_page' => $posts_per_page,
             's'              => $query->get('s'),
             'p'              => $query->get('p'),
+            'category_name'  => $query->get('category_name'), // taxonomy archives need separate keys
+            'tag'            => $query->get('tag'),
         ]);
 
         $cached = CacheManager::get($cache_key);
@@ -308,26 +310,32 @@ class PostLoader {
      */
     private function filterPosts($posts, $query) {
         $filtered = [];
-        
+
         foreach ($posts as $post) {
             // Match by slug (for single post queries)
             $slug = $query->get('name');
             if ($slug && $post->post_name !== $slug) {
                 continue;
             }
-            
+
             // Match by post ID
             $post_id = $query->get('p');
             if ($post_id && $post->ID != $post_id) {
                 continue;
             }
-            
-            // Match post status
+
+            // Match post status.
+            // Default to 'publish' when no status is requested (prevents drafts leaking into
+            // feeds, archives, and taxonomy pages which do not set an explicit post_status).
             $status = $query->get('post_status');
-            if ($status && $status !== 'any' && $post->post_status !== $status) {
+            if (empty($status) || $status === 'publish') {
+                if ($post->post_status !== 'publish') {
+                    continue;
+                }
+            } elseif ($status !== 'any' && $post->post_status !== $status) {
                 continue;
             }
-            
+
             // Match search query
             $search = $query->get('s');
             if ($search) {
@@ -336,12 +344,33 @@ class PostLoader {
                     continue;
                 }
             }
-            
+
+            // Taxonomy filtering — category and tag archives.
+            // File-based posts store their category/tag slugs in _praison_categories/_praison_tags.
+            // Without this filter every file post appears on every taxonomy archive page.
+            $cat_name = $query->get('category_name');
+            $tag      = $query->get('tag');
+
+            if ($cat_name) {
+                $post_cats = array_map('sanitize_title', (array) ($post->_praison_categories ?? []));
+                if (!in_array(sanitize_title($cat_name), $post_cats, true)) {
+                    continue;
+                }
+            }
+
+            if ($tag) {
+                $post_tags = array_map('sanitize_title', (array) ($post->_praison_tags ?? []));
+                if (!in_array(sanitize_title($tag), $post_tags, true)) {
+                    continue;
+                }
+            }
+
             $filtered[] = $post;
         }
-        
+
         return $filtered;
     }
+
     
     /**
      * Apply pagination to posts
