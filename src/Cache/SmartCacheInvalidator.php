@@ -94,61 +94,38 @@ class SmartCacheInvalidator {
     private static function clearPostCache($postType, $slug) {
         global $wpdb;
         $cleared = 0;
-        
-        // Clear transient cache for this specific post
-        $patterns = [
-            '_transient_' . PRAISON_CACHE_GROUP . '_' . $postType . '_' . $slug . '%',
-            '_transient_' . PRAISON_CACHE_GROUP . '_post_' . $slug . '%',
-        ];
-        
-        foreach ($patterns as $pattern) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-            $result = $wpdb->query(
-                $wpdb->prepare(
-                    "DELETE FROM $wpdb->options WHERE option_name LIKE %s OR option_name LIKE %s",
-                    $pattern,
-                    '_transient_timeout_' . str_replace('_transient_', '', $pattern)
-                )
-            );
-            $cleared += $result ? $result : 0;
-        }
-        
-        // Clear WordPress object cache if available
-        if (function_exists('wp_cache_delete')) {
-            wp_cache_delete($postType . '_' . $slug, PRAISON_CACHE_GROUP);
-            wp_cache_delete('post_' . $slug, PRAISON_CACHE_GROUP);
-        }
-        
-        return $cleared;
-    }
-    
-    /**
-     * Clear archive cache for a post type
-     * 
-     * @param string $postType Post type
-     * @return int Number of cache entries cleared
-     */
-    private static function clearArchiveCache($postType) {
-        global $wpdb;
-        
-        $pattern = '_transient_' . PRAISON_CACHE_GROUP . '_' . $postType . '_archive%';
-        
+
+        // CacheManager::buildKey() produces: PRAISON_CACHE_GROUP . '_' . $key
+        // getContentKey() produces: TYPE_mtime_md5hash
+        // So the stored transient is: _transient_praisonpress_TYPE_mtime_md5hash
+        // We can't match by slug (it's embedded in md5), so clear all entries for this post type.
+        $prefix   = PRAISON_CACHE_GROUP . '_' . $postType . '_';
+        $pattern  = '_transient_' . $prefix . '%';
+        $t_pattern = '_transient_timeout_' . $prefix . '%';
+
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $cleared = $wpdb->query(
+        $result = $wpdb->query(
             $wpdb->prepare(
                 "DELETE FROM $wpdb->options WHERE option_name LIKE %s OR option_name LIKE %s",
                 $pattern,
-                '_transient_timeout_' . str_replace('_transient_', '', $pattern)
+                $t_pattern
             )
         );
-        
-        // Clear WordPress object cache
-        if (function_exists('wp_cache_delete')) {
-            wp_cache_delete($postType . '_archive', PRAISON_CACHE_GROUP);
+        $cleared += $result ? $result : 0;
+
+        if (function_exists('wp_cache_flush_group')) {
+            wp_cache_flush_group(PRAISON_CACHE_GROUP);
         }
-        
-        return $cleared ? $cleared : 0;
+
+        return $cleared;
     }
+
+    private static function clearArchiveCache($postType) {
+        // Archive cache uses the same prefix as post cache — both cleared above.
+        // Kept for API compatibility.
+        return 0;
+    }
+
     
     /**
      * Clear user submissions cache for all users

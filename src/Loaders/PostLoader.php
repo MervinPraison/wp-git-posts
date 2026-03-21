@@ -199,7 +199,7 @@ class PostLoader {
                 'post_modified_gmt' => $entry['modified'] ?? current_time('mysql', 1),
                 'post_content_filtered' => '',
                 'post_parent' => 0,
-                'guid' => home_url('?praison_post=' . $entry['slug']),
+                'guid' => home_url($this->postsDir . '/' . $entry['slug'] . '/'),
                 'menu_order' => 0,
                 'post_type' => $this->postType === 'posts' ? 'praison_post' : $this->postType,
                 'post_mime_type' => '',
@@ -215,13 +215,12 @@ class PostLoader {
             $post->_praison_categories = $entry['categories'] ?? [];
             $post->_praison_tags = $entry['tags'] ?? [];
             $post->_praison_featured_image = $entry['featured_image'] ?? '';
-            $post->_praison_custom_fields = $entry['custom'] ?? [];
-            
+            $post->_praison_custom_fields = $entry['custom_fields'] ?? $entry['custom'] ?? [];
+
             // Store custom fields as post properties for ACF compatibility
-            if (!empty($entry['custom'])) {
-                foreach ($entry['custom'] as $key => $value) {
-                    $post->{$key} = $value;
-                }
+            $custom = $entry['custom_fields'] ?? $entry['custom'] ?? [];
+            foreach ($custom as $key => $value) {
+                $post->{$key} = $value;
             }
             
             $posts[] = $post;
@@ -271,7 +270,7 @@ class PostLoader {
             'post_modified_gmt' => $metadata['modified'] ?? current_time('mysql', 1),
             'post_content_filtered' => '',
             'post_parent' => 0,
-            'guid' => home_url('?praison_post=' . $metadata['slug']),
+            'guid' => home_url($this->postType . '/' . $metadata['slug'] . '/'),
             'menu_order' => 0,
             'post_type' => $this->postType === 'posts' ? 'praison_post' : $this->postType,
             'post_mime_type' => '',
