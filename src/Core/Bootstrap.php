@@ -227,9 +227,10 @@ class Bootstrap {
         
         // Check if we have a loader for this post type and load accordingly
         
-        // Fast early bail: skip entirely if no content directory exists for this post type.
-        // This prevents any unnecessary work for post types managed by the database.
-        $post_type_dir = PRAISON_CONTENT_DIR . '/' . $post_type;
+        // Fast early bail: skip if no content directory exists for this post type.
+        // Resolve special alias: the registered post type 'praison_post' is stored in the 'posts' dir.
+        $dir_name     = ($post_type === 'praison_post') ? 'posts' : $post_type;
+        $post_type_dir = PRAISON_CONTENT_DIR . '/' . $dir_name;
         if (!is_dir($post_type_dir)) {
             return $posts;
         }
