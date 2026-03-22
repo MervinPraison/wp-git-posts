@@ -39,14 +39,23 @@ GITHUB_REPO=owner/repo
 
 ## Content Structure
 
-| Directory | Content Type |
-|-----------|--------------|
-| `posts/` | Blog posts |
-| `pages/` | Static pages |
-| `lyrics/` | Song lyrics |
-| `recipes/` | Recipe content |
-| `config/` | Configuration files |
+| Directory | Post Type Registered | URL Pattern |
+|-----------|---------------------|-------------|
+| `posts/` | `praison_post` | `/posts/{slug}/` |
+| `pages/` | `pages` | `/pages/{slug}/` |
+| `{any-name}/` | `{any-name}` | `/{any-name}/{slug}/` |
+| `config/` | *(reserved)* | *(not registered)* |
 
-## Done!
+## After Adding Content
 
-Start adding content files. [Learn about file formats →](../features/file-content.md)
+Build the `_index.json` manifest for fast slug lookups:
+
+```bash
+# All types
+wp praison index
+
+# One specific type
+wp praison index --type=posts
+```
+
+Start adding content files. [Learn about file formats →](../features/file-based-content.md)

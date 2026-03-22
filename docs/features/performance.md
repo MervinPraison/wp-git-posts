@@ -1,95 +1,71 @@
 # Performance & Caching
 
-Optimize performance for sites with thousands of files.
+## Cache Key Strategy (v1.0.7+)
 
-## Overview
+Cache keys are built as: `praisonpress_{type}_{dir_mtime}_{md5(params)}`
 
-PraisonPressGit includes intelligent caching and indexing systems to handle sites of any size efficiently.
+The directory `mtime` is a **single O(1) syscall** — the OS updates it whenever
+a file is added, renamed, or removed, so the cache auto-invalidates on any
+content change without scanning individual files.
 
-## Caching System
+> **Before v1.0.7:** keys used `glob()` + `filemtime()` on every file — O(n)
+> on every request, unusable at 100k+ files.
 
-### WordPress Transients
+## Single-Post Slug Fast Path (v1.0.7+)
 
-File content is cached using WordPress transients:
+When WordPress requests a single post by slug (e.g. `/posts/hello-world/`),
+the plugin reads only **one file** instead of loading everything:
 
-```php
-// Configure cache TTL
-add_filter('praison_cache_ttl', function($ttl, $post_type) {
-    if ($post_type === 'lyrics') {
-        return 7200; // 2 hours for lyrics
-    }
-    return $ttl;
-}, 10, 2);
-```
+1. Checks `_index.json` → finds `{"file":"hello-world.md","slug":"hello-world",...}`
+2. Reads that one `.md` file
+3. Caches the result under `praisonpress_posts_{mtime}_{md5(slug)}`
 
-### Cache Invalidation
+Without `_index.json`, it falls back to a full directory scan.
 
-Cache automatically invalidates when:
-- Files are modified
-- Admin clears cache manually
-- TTL expires
+## Generating the Index
 
-### Clear Cache
-
-**Admin Dashboard:**
-Click "Clear Cache" in the PraisonPress dashboard
-
-**WP-CLI:**
-```bash
-wp cache flush
-wp transient delete --all
-```
-
-## Index System
-
-For large sites (1,000+ files), enable the index system:
-
-### Build Index
+Run after adding/modifying content:
 
 ```bash
-# Generate index file
-php wp-content/plugins/praisonpressgit/scripts/build-index.php
+# All post types
+wp praison index
+
+# Specific type
+wp praison index --type=posts
+
+# Verbose (shows each file)
+wp praison index --type=posts --verbose
 ```
 
-### Index Benefits
+Add this to CI/CD or a GitHub webhook so the index stays current.
 
-| Site Size | Without Index | With Index |
-|-----------|---------------|------------|
-| < 1,000 | 0.5s | 0.2s |
-| 1,000 - 10,000 | 2-5s | 0.2s |
-| 10,000 - 100,000 | 10-30s | 0.5-2s |
+## Scale Reference
 
-## Scaling Guide
+| File count | Without `_index.json` | With `_index.json` |
+|---|---|---|
+| < 1,000 | ~20ms | ~5ms |
+| 1,000–10,000 | 50–200ms | ~5ms |
+| 10,000–100,000 | 500ms+ | ~10ms |
+| 100,000+ | **Unusable** | ~10ms |
 
-### Small Sites (< 1,000 files)
+## Cache Invalidation
 
-```yaml
-Performance: ~0.5s load time
-Memory: ~50MB
-Cache: WordPress transients
+Cache auto-invalidates when:
+- A file is **added or removed** (directory mtime changes → new cache key)
+- **TTL expires** (default 3600 s / 1 hour)
+- **Manual clear:**
+
+```bash
+# WP-CLI
+wp eval 'praison_clear_cache();'
+
+# Or via Admin Dashboard — PraisonPress → Clear Cache
 ```
 
-### Medium Sites (1,000 - 10,000 files)
+## Object Cache (Redis)
 
-```yaml
-Performance: ~0.2s load time (5x faster)
-Memory: ~80MB
-Cache: Transients + Object cache
-Index: Recommended
-```
-
-### Large Sites (10,000 - 100,000 files)
-
-```yaml
-Performance: ~0.5-2s load time (50x faster)
-Memory: ~150MB
-Cache: Redis/Memcached required
-Index: Required
-```
-
-## Object Cache
-
-For best performance, use Redis:
+Transients are stored in Redis when a Redis object cache plugin is active —
+cache reads are then in-memory with no DB hit.
 
 ```php
 // wp-config.php
@@ -97,7 +73,26 @@ define('WP_REDIS_HOST', 'redis-service');
 define('WP_REDIS_PORT', 6379);
 ```
 
-Install Redis Object Cache plugin:
-```bash
-wp plugin install redis-cache --activate
+## Taxonomy Archive Cache Keys
+
+Each taxonomy archive (category, tag) gets its **own cache entry**:
+- `/category/general/` → key includes `category_name=general`
+- `/tag/markdown/`     → key includes `tag=markdown`
+
+This prevents one archive's results being served for another.
+
+## Object Cache Filter
+
+```php
+add_filter('praison_cache_ttl', function($ttl, $post_type) {
+    return 7200; // 2 hours
+}, 10, 2);
 ```
+
+## Recommendations for Large Sites
+
+1. Always generate `_index.json` before traffic (`wp praison index`)
+2. Point `PRAISON_CONTENT_DIR` to fast local storage (not NFS)
+3. Use Redis as the object cache backend
+4. Regenerate the index in CI on each content deploy
+5. Do not create a content directory for post types managed by the database
