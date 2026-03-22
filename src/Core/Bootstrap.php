@@ -235,6 +235,35 @@ class Bootstrap {
             return $posts;
         }
 
+        // ── Safety guard: prevent overriding post types that already have DB content ──────────
+        //
+        // Allow site owners to explicitly block directory names via filter:
+        //   add_filter('praison_blocked_post_types', fn($b) => array_merge($b, ['lyrics','chords']));
+        $blocked = apply_filters('praison_blocked_post_types', []);
+        if (in_array($post_type, $blocked, true) || in_array($dir_name, $blocked, true)) {
+            if (defined('PRAISON_DEBUG') && PRAISON_DEBUG) {
+                error_log("PraisonPress: '{$post_type}' is in praison_blocked_post_types — skipping file injection.");
+            }
+            return $posts;
+        }
+
+        // Auto-protect: if this post type has existing DB posts, refuse to intercept its queries.
+        // This prevents accidentally breaking existing content when a directory is mis-named.
+        if ($post_type !== 'praison_post') {
+            $db_count = wp_count_posts($post_type);
+            $has_db_content = isset($db_count->publish) && (int) $db_count->publish > 0;
+            if ($has_db_content) {
+                // The directory exists but so does DB content — log and bail.
+                // To override this protection, use the praison_blocked_post_types filter
+                // with the type removed, or rename the content directory.
+                if (defined('PRAISON_DEBUG') && PRAISON_DEBUG) {
+                    error_log("PraisonPress: SAFETY — '{$post_type}' has DB posts ({$db_count->publish}). File injection blocked to prevent data loss. Rename directory or use praison_allow_post_type filter.");
+                }
+                return $posts;
+            }
+        }
+        // ── End safety guard ─────────────────────────────────────────────────────────────────
+
         // Get file-based posts
         $file_posts = null;
         
