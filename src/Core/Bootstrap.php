@@ -317,17 +317,40 @@ class Bootstrap {
         
         // If no file-based posts, return database posts as-is
         if (empty($file_posts)) {
+            if (get_option('praisonpress_qm_logging')) {
+                do_action('qm/debug', sprintf(
+                    '[PraisonPress] DB fallback for "%s" (post_type=%s)',
+                    $query->get('name') ?: $query->get('pagename') ?: 'archive',
+                    $post_type
+                ));
+            }
             return $posts;
         }
         
         // If $posts is null (posts_pre_query before DB query), return only file-based posts
         // This happens when WordPress hasn't queried the database yet
         if ($posts === null) {
+            if (get_option('praisonpress_qm_logging')) {
+                do_action('qm/info', sprintf(
+                    '[PraisonPress] ✅ HEADLESS: Serving %d post(s) from Git files (post_type=%s, slug=%s)',
+                    count($file_posts),
+                    $post_type,
+                    $query->get('name') ?: 'archive'
+                ));
+            }
             return $file_posts;
         }
         
         // MERGE: Combine database posts with file-based posts
         // File-based posts take precedence for duplicate slugs
+        if (get_option('praisonpress_qm_logging')) {
+            do_action('qm/info', sprintf(
+                '[PraisonPress] ✅ HEADLESS+MERGE: %d file post(s) + %d DB post(s) (post_type=%s)',
+                count($file_posts),
+                count($posts),
+                $post_type
+            ));
+        }
         $merged = [];
         $slugs_seen = [];
         
@@ -564,11 +587,41 @@ status: "publish"
      * Render settings page
      */
     public function renderSettingsPage() {
+        // Handle settings save
+        if (isset($_POST['praisonpress_save_settings']) && check_admin_referer('praisonpress_settings_nonce')) {
+            $qm_logging = isset($_POST['praisonpress_qm_logging']) ? 1 : 0;
+            update_option('praisonpress_qm_logging', $qm_logging);
+            echo '<div class="notice notice-success"><p>✅ Settings saved.</p></div>';
+        }
+        
+        $qm_enabled = get_option('praisonpress_qm_logging', 0);
         ?>
         <div class="wrap">
             <h1>PraisonPress Settings</h1>
             
             <div class="card" style="max-width: 800px;">
+                <h2>🔍 Diagnostics</h2>
+                <form method="post">
+                    <?php wp_nonce_field('praisonpress_settings_nonce'); ?>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Query Monitor Logging</th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="praisonpress_qm_logging" value="1" <?php checked($qm_enabled, 1); ?> />
+                                    Enable headless content source logging in Query Monitor
+                                </label>
+                                <p class="description">When enabled, each page load logs whether content was served from Git files or the database. Visible in Query Monitor's "Logs" panel. No performance impact when disabled.</p>
+                            </td>
+                        </tr>
+                    </table>
+                    <p class="submit">
+                        <input type="submit" name="praisonpress_save_settings" class="button button-primary" value="Save Settings" />
+                    </p>
+                </form>
+            </div>
+            
+            <div class="card" style="max-width: 800px; margin-top: 20px;">
                 <h2>⚙️ Configuration</h2>
                 <p>Edit your configuration file at:</p>
                 <p><code><?php echo esc_html(PRAISON_PLUGIN_DIR); ?>/site-config.ini</code></p>
