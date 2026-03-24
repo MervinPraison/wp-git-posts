@@ -174,6 +174,34 @@ class ExportConfig {
     }
     
     /**
+     * Get meta fields to exclude from export.
+     * Merges global [exclude_meta] keys with per-post-type exclude_meta.
+     * 
+     * @param string $postType Post type name
+     * @return array Array of meta field names to exclude
+     */
+    public function getExcludeMeta($postType) {
+        // Global excludes from [exclude_meta] section
+        $globalExcludes = [];
+        if (isset($this->config['exclude_meta'])) {
+            $globalExcludes = array_keys(array_filter($this->config['exclude_meta']));
+        }
+        
+        // Per-post-type excludes
+        $config = $this->getPostTypeConfig($postType);
+        $typeExcludes = [];
+        if (isset($config['exclude_meta'])) {
+            if (is_string($config['exclude_meta'])) {
+                $typeExcludes = array_map('trim', explode(',', $config['exclude_meta']));
+            } elseif (is_array($config['exclude_meta'])) {
+                $typeExcludes = $config['exclude_meta'];
+            }
+        }
+        
+        return array_unique(array_merge($globalExcludes, $typeExcludes));
+    }
+    
+    /**
      * Generate file path for a post based on configuration
      * 
      * @param string $postType Post type name

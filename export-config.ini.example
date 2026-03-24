@@ -1,0 +1,55 @@
+; =============================================================================
+; PraisonPress Export Configuration
+; =============================================================================
+; Copy this file to export-config.ini and customise as needed.
+;
+; Each [post_type] section controls how that post type is exported.
+; The special [exclude_meta] section lists meta keys to strip globally.
+;
+; Per-post-type exclusion:  add  exclude_meta = "key1, key2"  inside
+; the post-type section.
+; =============================================================================
+
+[general]
+export_base_dir = "content"
+date_format = "Y-m-d"
+default_date_prefix = false
+
+; ---------------------------------------------------------------------------
+; Global meta exclusion
+; Keys listed here (set to 1) are stripped from ALL post types during export.
+; ---------------------------------------------------------------------------
+[exclude_meta]
+; source_url = 1
+; _internal_tracking = 1
+
+; ---------------------------------------------------------------------------
+; Post type: lyrics
+; ---------------------------------------------------------------------------
+[lyrics]
+directory = "lyrics"
+structure = "flat"
+filename_pattern = "{slug}.md"
+date_prefix = false
+; Comma-separated list of meta keys to exclude for this post type only:
+; exclude_meta = "source_url, _some_internal_field"
+
+; ---------------------------------------------------------------------------
+; Post type: chords
+; ---------------------------------------------------------------------------
+[chords]
+directory = "chords"
+structure = "flat"
+filename_pattern = "{slug}.md"
+date_prefix = false
+; exclude_meta = "source_url"
+
+; ---------------------------------------------------------------------------
+; Post type: post  (default WordPress posts)
+; ---------------------------------------------------------------------------
+[post]
+directory = "posts"
+structure = "date"
+date_depth = 2
+filename_pattern = "{date}-{slug}.md"
+date_prefix = true

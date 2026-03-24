@@ -126,6 +126,16 @@ function export_post_to_markdown($post, $output_dir) {
     // Get all custom fields (post meta)
     $custom_fields = [];
     
+    // Load exclude list from ExportConfig if available
+    $exclude_meta = [];
+    if (class_exists('PraisonPress\\Export\\ExportConfig')) {
+        $exportConfig = new PraisonPress\Export\ExportConfig();
+        $exclude_meta = $exportConfig->getExcludeMeta($post->post_type);
+    }
+    
+    // Allow filtering via WordPress hook (generic for all users)
+    $exclude_meta = apply_filters('praison_export_exclude_meta', $exclude_meta, $post->post_type, $post->ID);
+    
     // Check if ACF is active
     $has_acf = function_exists('get_fields');
     
@@ -134,7 +144,9 @@ function export_post_to_markdown($post, $output_dir) {
         $acf_fields = get_fields($post->ID);
         if ($acf_fields) {
             foreach ($acf_fields as $key => $value) {
-                $custom_fields[$key] = $value;
+                if (!in_array($key, $exclude_meta, true)) {
+                    $custom_fields[$key] = $value;
+                }
             }
         }
     }
@@ -142,8 +154,8 @@ function export_post_to_markdown($post, $output_dir) {
     // Also get standard post meta (non-ACF custom fields)
     $all_meta = get_post_meta($post->ID);
     foreach ($all_meta as $key => $value) {
-        // Skip WordPress internal fields and ACF internal fields
-        if (strpos($key, '_') !== 0 && !isset($custom_fields[$key])) {
+        // Skip WordPress internal fields, ACF internal fields, and excluded fields
+        if (strpos($key, '_') !== 0 && !isset($custom_fields[$key]) && !in_array($key, $exclude_meta, true)) {
             $custom_fields[$key] = is_array($value) && count($value) === 1 ? $value[0] : $value;
         }
     }
