@@ -181,7 +181,7 @@ class PostLoader {
             
             // Create post data from index
             $post_data = [
-                'ID' => abs(crc32($entry['slug'])),
+                'ID' => -1 * abs(crc32($entry['slug'])),
                 'post_author' => $author_id,
                 'post_date' => $entry['date'],
                 'post_date_gmt' => $entry['date'],
@@ -252,7 +252,7 @@ class PostLoader {
         
         // Create post data
         $post_data = [
-            'ID' => abs(crc32($metadata['slug'])), // Generate numeric ID from slug
+            'ID' => -1 * abs(crc32($metadata['slug'])), // Generate negative numeric ID from slug to prevent DB collisions
             'post_author' => $author_id,
             'post_date' => $metadata['date'] ?? current_time('mysql'),
             'post_date_gmt' => $metadata['date'] ?? current_time('mysql', 1),
