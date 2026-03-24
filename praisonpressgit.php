@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PraisonAI Git Posts
  * Description: Load WordPress content from files (Markdown, JSON, YAML) without database writes, with Git-based version control
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: MervinPraison
  * Author URI: https://mer.vin
  * License: GPL v2 or later

@@ -16,6 +16,7 @@ class Bootstrap {
     private static $instance = null;
     private $postLoaders = [];
     private $postTypes = [];
+    private $allowedPostTypes = null;
     
     /**
      * Initialize the plugin
@@ -103,6 +104,29 @@ class Bootstrap {
     }
     
     /**
+     * Get the allowed post types from site-config.ini
+     * 
+     * @return array|null Array of allowed types, or null if setting doesn't exist (allow all)
+     */
+    private function getAllowedPostTypes() {
+        if ($this->allowedPostTypes !== null) {
+            return $this->allowedPostTypes;
+        }
+        
+        $config_file = PRAISON_PLUGIN_DIR . '/site-config.ini';
+        if (file_exists($config_file)) {
+            $config = parse_ini_file($config_file, true);
+            if (isset($config['content']['post_types']) && is_array($config['content']['post_types'])) {
+                $this->allowedPostTypes = $config['content']['post_types'];
+                return $this->allowedPostTypes;
+            }
+        }
+        
+        $this->allowedPostTypes = false; // Use false internally to denote "checked but not found"
+        return null; // Return null to mean "allow all"
+    }
+
+    /**
      * Dynamically discover post types from content directory
      * Scans folders and auto-registers them as post types
      * 
@@ -119,6 +143,8 @@ class Bootstrap {
         // Scan content directory for subdirectories
         $items = scandir(PRAISON_CONTENT_DIR);
         
+        $allowed = $this->getAllowedPostTypes();
+        
         foreach ($items as $item) {
             // Skip hidden files, current/parent directory references
             if ($item[0] === '.' || $item === 'config') {
@@ -129,6 +155,15 @@ class Bootstrap {
             
             // Only process directories
             if (is_dir($path)) {
+                // If allowed list is defined in config, skip post types not in the list
+                // Note: The directory name for 'post' is 'posts', so check both
+                if ($allowed !== null) {
+                    $check_name = ($item === 'posts') ? 'post' : $item;
+                    if (!in_array($check_name, $allowed, true)) {
+                        continue;
+                    }
+                }
+                
                 $types[] = $item;
             }
         }
@@ -214,12 +249,37 @@ class Bootstrap {
         // If no post type specified, check if we're on home/archive (main query only)
         if (empty($post_type)) {
             if ($query->is_main_query() && (is_home() || is_archive())) {
-                // Check if posts loader exists before calling
-                if (isset($this->postLoaders['posts'])) {
-                    return $this->postLoaders['posts']->loadPosts($query);
+                $allowed = $this->getAllowedPostTypes();
+                // Check if 'post' is allowed to be file-based
+                if ($allowed === null || in_array('post', $allowed, true)) {
+                    // Check if posts loader exists before calling
+                    if (isset($this->postLoaders['posts'])) {
+                        return $this->postLoaders['posts']->loadPosts($query);
+                    }
                 }
             }
             return $posts;
+        }
+        
+        // Skip injection if this post type is explicitly excluded from site-config.ini
+        $allowed = $this->getAllowedPostTypes();
+        if ($allowed !== null) {
+            // Handle array of post types or single string
+            $types_to_check = is_array($post_type) ? $post_type : [$post_type];
+            $has_allowed = false;
+            
+            foreach ($types_to_check as $type) {
+                // Translate internal post type back to standard if needed
+                $check_type = ($type === 'praison_post') ? 'post' : $type;
+                if (in_array($check_type, $allowed, true)) {
+                    $has_allowed = true;
+                    break;
+                }
+            }
+            
+            if (!$has_allowed) {
+                return $posts;
+            }
         }
         
         // Check if this is a file-based post type and load accordingly
