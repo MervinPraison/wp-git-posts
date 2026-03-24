@@ -225,6 +225,16 @@ class Bootstrap {
         // Check if this is a file-based post type and load accordingly
         // For custom post types, inject even if not main query (for WP_Query calls)
         
+        // Check if we have a loader for this post type and load accordingly
+        
+        // Fast early bail: skip if no content directory exists for this post type.
+        // Resolve special alias: the registered post type 'praison_post' is stored in the 'posts' dir.
+        $dir_name     = ($post_type === 'praison_post') ? 'posts' : $post_type;
+        $post_type_dir = PRAISON_CONTENT_DIR . '/' . $dir_name;
+        if (!is_dir($post_type_dir)) {
+            return $posts;
+        }
+
         // Get file-based posts
         $file_posts = null;
         
