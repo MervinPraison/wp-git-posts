@@ -101,6 +101,12 @@ class Bootstrap {
         
         // Admin notices
         add_action('admin_notices', [$this, 'showAdminNotices']);
+        
+        // Auto-export on publish (requires [sync] config in site-config.ini)
+        if (file_exists(PRAISON_PLUGIN_DIR . '/src/Export/AutoExporter.php')) {
+            $autoExporter = new \PraisonPress\Export\AutoExporter();
+            $autoExporter->register();
+        }
     }
     
     /**
