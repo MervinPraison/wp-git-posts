@@ -116,7 +116,8 @@ class Bootstrap {
      */
     private function getAllowedPostTypes() {
         if ($this->allowedPostTypes !== null) {
-            return $this->allowedPostTypes;
+            // false is our internal sentinel for "checked but not found" → return null (allow all)
+            return $this->allowedPostTypes === false ? null : $this->allowedPostTypes;
         }
         
         $config_file = PRAISON_PLUGIN_DIR . '/site-config.ini';
