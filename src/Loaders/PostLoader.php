@@ -74,24 +74,36 @@ class PostLoader {
             return $cached['posts'];
         }
 
-        $all_posts      = $this->loadAllPosts();
-        $filtered_posts = $this->filterPosts($all_posts, $query);
+        // Stampede protection: only one worker rebuilds cache at a time
+        $lock_key = 'praisonpress_lock_' . $this->postType;
+        $acquired = wp_cache_add($lock_key, 1, '', 30);
+        if (!$acquired) {
+            // Another worker is rebuilding — return null to let DB fallback handle it
+            return null;
+        }
 
-        usort($filtered_posts, function($a, $b) {
-            return strtotime($b->post_date) - strtotime($a->post_date);
-        });
+        try {
+            $all_posts      = $this->loadAllPosts();
+            $filtered_posts = $this->filterPosts($all_posts, $query);
 
-        $paginated_posts = $this->applyPagination($filtered_posts, $query);
+            usort($filtered_posts, function($a, $b) {
+                return strtotime($b->post_date) - strtotime($a->post_date);
+            });
 
-        $cache_data = [
-            'posts'         => $paginated_posts,
-            'found_posts'   => count($filtered_posts),
-            'max_num_pages' => ceil(count($filtered_posts) / max(1, $posts_per_page)),
-        ];
-        CacheManager::set($cache_key, $cache_data, 3600);
-        $this->setPaginationVars($query, $cache_data);
+            $paginated_posts = $this->applyPagination($filtered_posts, $query);
 
-        return $paginated_posts;
+            $cache_data = [
+                'posts'         => $paginated_posts,
+                'found_posts'   => count($filtered_posts),
+                'max_num_pages' => ceil(count($filtered_posts) / max(1, $posts_per_page)),
+            ];
+            CacheManager::set($cache_key, $cache_data, 3600);
+            $this->setPaginationVars($query, $cache_data);
+
+            return $paginated_posts;
+        } finally {
+            wp_cache_delete($lock_key);
+        }
     }
     
     /**
@@ -156,36 +168,18 @@ class PostLoader {
         $posts = [];
         
         foreach ($indexData as $entry) {
-            // Build full file path
-            $file = $this->postsDir . '/' . $entry['file'];
-            
-            if (!file_exists($file)) {
+            // Skip entries without required fields
+            if (empty($entry['title']) || empty($entry['slug'])) {
                 continue;
             }
             
-            // Read only the file content (front matter already parsed in index)
-            $content = file_get_contents($file);
-            
-            // Extract content after front matter
-            if (preg_match('/^---\s*\n.*?\n---\s*\n(.*)$/s', $content, $matches)) {
-                $markdownContent = $matches[1];
-            } else {
-                $markdownContent = $content;
-            }
-            
-            // Parse markdown to HTML
-            $htmlContent = $this->parser->parse($markdownContent);
-            
-            // Get author ID
-            $author_id = $this->getUserIdByLogin($entry['author'] ?? 'admin');
-            
-            // Create post data from index
+            // Create WP_Post directly from index metadata — NO file reads!
             $post_data = [
                 'ID' => -1 * abs(crc32($entry['slug'])),
-                'post_author' => $author_id,
-                'post_date' => $entry['date'],
-                'post_date_gmt' => $entry['date'],
-                'post_content' => $htmlContent,
+                'post_author' => 1, // Default author; avoid DB lookup for archive listing
+                'post_date' => $entry['date'] ?? current_time('mysql'),
+                'post_date_gmt' => $entry['date'] ?? current_time('mysql', 1),
+                'post_content' => '', // Not needed for archive listing
                 'post_title' => $entry['title'],
                 'post_excerpt' => $entry['excerpt'] ?? '',
                 'post_status' => $entry['status'] ?? 'publish',
@@ -199,7 +193,7 @@ class PostLoader {
                 'post_modified_gmt' => $entry['modified'] ?? current_time('mysql', 1),
                 'post_content_filtered' => '',
                 'post_parent' => 0,
-                'guid' => home_url($this->postsDir . '/' . $entry['slug'] . '/'),
+                'guid' => home_url($this->postType . '/' . $entry['slug'] . '/'),
                 'menu_order' => 0,
                 'post_type' => $this->postType === 'posts' ? 'praison_post' : $this->postType,
                 'post_mime_type' => '',
@@ -207,11 +201,10 @@ class PostLoader {
                 'filter' => 'raw',
             ];
             
-            // Create WP_Post object
             $post = new \WP_Post((object) $post_data);
             
-            // Store additional metadata
-            $post->_praison_file = $file;
+            // Store metadata from index
+            $post->_praison_file = $this->postsDir . '/' . ($entry['file'] ?? '');
             $post->_praison_categories = $entry['categories'] ?? [];
             $post->_praison_tags = $entry['tags'] ?? [];
             $post->_praison_featured_image = $entry['featured_image'] ?? '';
@@ -441,11 +434,16 @@ class PostLoader {
             }
         }
 
-        // Fallback: full scan (no _index.json present)
-        $all = $this->loadAllPosts();
-        return array_values(array_filter($all, function($p) use ($slug) {
-            return $p->post_name === $slug;
-        }));
+        // Fallback: direct file lookup by slug (no full scan)
+        $file = $this->postsDir . '/' . $slug . '.md';
+        if (file_exists($file)) {
+            $content = file_get_contents($file);
+            $parsed  = $this->frontMatterParser->parse($content);
+            $post    = $this->createPostObject($parsed, $file);
+            return $post ? [$post] : [];
+        }
+
+        return [];
     }
 
     /**

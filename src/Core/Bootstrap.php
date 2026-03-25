@@ -17,6 +17,8 @@ class Bootstrap {
     private $postLoaders = [];
     private $postTypes = [];
     private $allowedPostTypes = null;
+    private $postTypesDiscovered = false;
+    private static $parsedConfig = null;
     
     /**
      * Initialize the plugin
@@ -29,21 +31,42 @@ class Bootstrap {
     }
     
     /**
-     * Constructor - register all hooks
+     * Parse site-config.ini ONCE and cache statically (zero I/O after first call)
+     */
+    private static function getConfig() {
+        if (self::$parsedConfig !== null) {
+            return self::$parsedConfig;
+        }
+        $config_file = PRAISON_PLUGIN_DIR . '/site-config.ini';
+        if (file_exists($config_file)) {
+            self::$parsedConfig = parse_ini_file($config_file, true) ?: [];
+        } else {
+            self::$parsedConfig = [];
+        }
+        return self::$parsedConfig;
+    }
+    
+    /**
+     * Check if file-based content delivery is enabled in site-config.ini
+     */
+    private function isContentEnabled() {
+        $config = self::getConfig();
+        // Default to false if not set — explicit opt-in required
+        if (!isset($config['content']['enabled'])) {
+            return false;
+        }
+        $val = $config['content']['enabled'];
+        return filter_var($val, FILTER_VALIDATE_BOOLEAN);
+    }
+    
+    /**
+     * Constructor - register hooks ONLY (NO filesystem I/O)
      */
     private function __construct() {
-        // Discover post types dynamically from content directory
-        $this->postTypes = $this->discoverPostTypes();
-        
-        // Initialize loaders for each discovered post type
-        foreach ($this->postTypes as $type) {
-            $this->postLoaders[$type] = new PostLoader($type);
-        }
-        
-        // Register custom post type
+        // Register custom post type (deferred — runs at 'init' action)
         add_action('init', [$this, 'registerPostType']);
         
-        // Virtual post injection - THE CORE MAGIC!
+        // Virtual post injection — lazy: actual work deferred to first call
         add_filter('posts_pre_query', [$this, 'injectFilePosts'], 10, 2);
         
         // Initialize export page early (before admin_menu)
@@ -120,13 +143,10 @@ class Bootstrap {
             return $this->allowedPostTypes === false ? null : $this->allowedPostTypes;
         }
         
-        $config_file = PRAISON_PLUGIN_DIR . '/site-config.ini';
-        if (file_exists($config_file)) {
-            $config = parse_ini_file($config_file, true);
-            if (isset($config['content']['post_types']) && is_array($config['content']['post_types'])) {
-                $this->allowedPostTypes = $config['content']['post_types'];
-                return $this->allowedPostTypes;
-            }
+        $config = self::getConfig();
+        if (isset($config['content']['post_types']) && is_array($config['content']['post_types'])) {
+            $this->allowedPostTypes = $config['content']['post_types'];
+            return $this->allowedPostTypes;
         }
         
         $this->allowedPostTypes = false; // Use false internally to denote "checked but not found"
@@ -179,10 +199,31 @@ class Bootstrap {
     }
     
     /**
+     * Lazy initialization: discover post types and create loaders on first use.
+     * Only called when injectFilePosts actually needs to serve content.
+     */
+    private function ensurePostTypesDiscovered() {
+        if ($this->postTypesDiscovered) {
+            return;
+        }
+        $this->postTypesDiscovered = true;
+        $this->postTypes = $this->discoverPostTypes();
+        foreach ($this->postTypes as $type) {
+            if (!isset($this->postLoaders[$type])) {
+                $this->postLoaders[$type] = new PostLoader($type);
+            }
+        }
+    }
+    
+    /**
      * Register custom post types dynamically based on discovered folders
      * Only registers if WordPress hasn't already registered the post type
      */
     public function registerPostType() {
+        if (!$this->isContentEnabled()) {
+            return;
+        }
+        $this->ensurePostTypesDiscovered();
         foreach ($this->postTypes as $type) {
             // Special case for 'posts' - register as 'praison_post'
             $post_type_slug = ($type === 'posts') ? 'praison_post' : $type;
@@ -243,6 +284,14 @@ class Bootstrap {
         if ((is_admin() && !wp_doing_ajax()) || (defined('WP_CLI') && WP_CLI)) {
             return $posts;
         }
+        
+        // Check if file-based content is enabled in site-config.ini
+        if (!$this->isContentEnabled()) {
+            return $posts;
+        }
+        
+        // Lazy initialization: only scan filesystem on first matching request
+        $this->ensurePostTypesDiscovered();
         
         // Get the post type being queried
         $post_type = $query->get('post_type');
