@@ -1,0 +1,16 @@
+{
+    "name": "mervinpraison/praison-file-content-git",
+    "description": "Load WordPress content from files (Markdown, JSON, YAML) without database writes, with Git-based version control",
+    "type": "wordpress-plugin",
+    "version": "1.5.0",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "MervinPraison",
+            "homepage": "https://mer.vin"
+        }
+    ],
+    "require": {
+        "php": ">=7.1"
+    }
+}
