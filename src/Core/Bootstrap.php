@@ -164,11 +164,25 @@ class Bootstrap {
     /**
      * Register virtual meta for a headless post (called by PostLoader).
      *
+     * Pre-populates the WordPress metadata cache so get_post_meta() returns
+     * our values directly. WordPress's get_metadata() checks its internal
+     * cache BEFORE the get_post_metadata filter, so the filter alone is
+     * insufficient — we must prime the cache.
+     *
      * @param int   $post_id Negative virtual post ID.
      * @param array $meta    Associative array of meta key => value.
      */
     public static function registerVirtualMeta( int $post_id, array $meta ): void {
         self::$virtualMeta[ $post_id ] = $meta;
+        
+        // Pre-populate WordPress metadata cache.
+        // WordPress stores meta as [ 'key' => [ [serialized_value], ... ] ].
+        $cache_data = [];
+        foreach ( $meta as $key => $value ) {
+            // WordPress stores each meta value as an array of serialized values.
+            $cache_data[ $key ] = [ maybe_serialize( $value ) ];
+        }
+        wp_cache_set( $post_id, $cache_data, 'post_meta' );
     }
     
     /**
