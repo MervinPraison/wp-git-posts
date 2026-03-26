@@ -164,47 +164,43 @@ class Bootstrap {
     /**
      * Register virtual meta for a headless post (called by PostLoader).
      *
-     * Pre-populates the WordPress metadata cache so get_post_meta() returns
-     * our values directly. WordPress's get_metadata() checks its internal
-     * cache BEFORE the get_post_metadata filter, so the filter alone is
-     * insufficient — we must prime the cache.
+     * WordPress's get_metadata_raw() calls absint($object_id), converting
+     * negative IDs to positive before both filter and cache lookups.
+     * We store under both negative (for direct property access) and
+     * positive/absint'd (for WordPress metadata system compatibility).
      *
      * @param int   $post_id Negative virtual post ID.
      * @param array $meta    Associative array of meta key => value.
      */
     public static function registerVirtualMeta( int $post_id, array $meta ): void {
+        // Store under original negative ID (for internal lookups).
         self::$virtualMeta[ $post_id ] = $meta;
         
-        // Pre-populate WordPress metadata cache.
-        // WordPress stores meta as [ 'key' => [ [serialized_value], ... ] ].
+        // Also store under absint'd ID (WordPress converts negative → positive).
+        $abs_id = abs( $post_id );
+        self::$virtualMeta[ $abs_id ] = $meta;
+        
+        // Pre-populate WordPress metadata cache under the absint'd ID.
         $cache_data = [];
         foreach ( $meta as $key => $value ) {
-            // WordPress stores each meta value as an array of serialized values.
             $cache_data[ $key ] = [ maybe_serialize( $value ) ];
         }
-        wp_cache_set( $post_id, $cache_data, 'post_meta' );
+        wp_cache_set( $abs_id, $cache_data, 'post_meta' );
     }
     
     /**
-     * Intercept get_post_meta() for virtual (negative-ID) headless posts.
+     * Intercept get_post_meta() for virtual headless posts.
      *
-     * Returns custom_fields values from frontmatter, allowing templates
-     * using get_field(), get_post_meta(), etc. to work with headless content.
-     *
-     * Performance: zero overhead for real posts — early return on positive IDs.
+     * NOTE: WordPress calls absint() on the post_id before passing it to
+     * this filter, so we receive the POSITIVE version of the ID.
      *
      * @param mixed  $value    Existing value (null = not filtered yet).
-     * @param int    $post_id  Post ID.
+     * @param int    $post_id  Post ID (already absint'd by WordPress).
      * @param string $meta_key Meta key being requested.
      * @param bool   $single   Whether to return a single value.
      * @return mixed
      */
     public function interceptVirtualMeta( $value, $post_id, $meta_key, $single ) {
-        // EARLY RETURN: only intercept virtual (negative-ID) posts.
-        if ( $post_id >= 0 ) {
-            return $value;
-        }
-        
         if ( ! isset( self::$virtualMeta[ $post_id ] ) ) {
             return $value;
         }
@@ -222,8 +218,6 @@ class Bootstrap {
         
         // Return specific key if it exists.
         if ( isset( $meta[ $meta_key ] ) ) {
-            // WordPress expects get_post_metadata filter to return an array
-            // whose first element is the actual value, when $single is true.
             return [ $meta[ $meta_key ] ];
         }
         
