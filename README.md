@@ -2,7 +2,7 @@
 
 **PraisonPressGit** - A powerful WordPress plugin that loads content from files (Markdown, JSON, YAML) without database writes, featuring Git-based version control and cloud-native deployment support.
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/your-repo/praisonpressgit)
+[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/MervinPraison/wp-git-posts)
 [![WordPress](https://img.shields.io/badge/WordPress-5.0%2B-green.svg)](https://wordpress.org/)
 [![PHP](https://img.shields.io/badge/PHP-7.4%2B-purple.svg)](https://php.net/)
 
@@ -37,6 +37,15 @@
 - **🎯 Smart Caching**: WordPress transients with automatic invalidation
 - **🌐 Multi-Pod Support**: Horizontal scaling with shared storage
 - **🔧 WP-CLI Support**: Command-line tools for automation
+
+### 🔄 Bidirectional Git Sync (v1.8.0)
+
+- **📤 Auto-Export**: Dashboard edits automatically export to `.md` files and push to Git
+- **📥 Auto-Import**: Git pushes (via webhook) automatically pull and update the index
+- **🔁 Incremental Indexing**: O(1) index updates (~10ms per post) — no full-rescan rebuilds
+- **🗑️ Deletion Handling**: Trashing/deleting posts auto-removes `.md` files and `_index.json` entries
+- **📋 Virtual Post Meta**: `get_post_meta()` works for headless posts via frontmatter data
+- **🔒 Concurrency Safe**: `flock()` file locking prevents index corruption during parallel operations
 
 ### 🤝 Collaborative Editing Features (NEW)
 
@@ -453,12 +462,15 @@ PraisonPressGit uses a **virtual post injection** system:
 
 ### Components
 
-- **Bootstrap.php**: Main entry point, discovers post types
+- **Bootstrap.php**: Main entry point, discovers post types, virtual meta filter
 - **PostLoader.php**: Loads and parses Markdown files (with index support)
+- **IndexManager.php**: Incremental `_index.json` updates (add, update, remove)
+- **AutoExporter.php**: Dashboard → `.md` file export with Git commit/push
+- **SyncManager.php**: Git pull with diff-based incremental import
 - **CacheManager.php**: Transient-based caching
 - **MarkdownParser.php**: Converts Markdown to HTML
 - **FrontMatterParser.php**: Parses YAML metadata
-- **Admin Pages**: Dashboard, history, and statistics
+- **Admin Pages**: Dashboard, history, settings, and statistics
 
 ---
 
@@ -730,6 +742,17 @@ Contributions welcome! Please:
 ---
 
 ## 📝 Changelog
+
+### Version 1.8.0 (2026-03-26)
+
+- ✅ Bidirectional Git sync (dashboard → Git, Git → WordPress)
+- ✅ Incremental index updates (O(1) per post, ~10ms)
+- ✅ IndexManager with atomic file ops and flock() concurrency safety
+- ✅ Deletion handling (trash/delete auto-removes .md + index entry)
+- ✅ Virtual post meta via `get_post_meta()` for headless posts
+- ✅ `registerPostsMeta()` reads `_index.json` by slug (survives cache serialization)
+- ✅ WordPress `absint()` compatibility for negative virtual IDs
+- ✅ SyncManager diff detection (A/M/D/R) after `git pull`
 
 ### Version 1.0.0 (2024-10-31)
 

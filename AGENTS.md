@@ -15,6 +15,9 @@ PraisonAI-Git-Posts/
 ├── src/                     # PHP source code
 │   ├── Core/               # Bootstrap, Router
 │   ├── Loaders/            # PostLoader (file → WP_Post)
+│   ├── Index/              # IndexManager (incremental _index.json ops)
+│   ├── Export/             # AutoExporter (dashboard → .md → Git)
+│   ├── GitHub/             # SyncManager (Git pull/push/diff)
 │   ├── Cache/              # CacheManager, SmartCacheInvalidator
 │   ├── Parsers/            # FrontMatterParser, MarkdownParser
 │   ├── CLI/                # IndexCommand (wp praison index)
@@ -32,7 +35,7 @@ PraisonAI-Git-Posts/
 **Single Source of Truth:** `praisonpressgit.php` line 5
 
 ```php
-Version: 1.0.9
+Version: 1.8.0
 ```
 
 Also update `version.txt` and `PRAISON_VERSION` constant.
@@ -43,8 +46,11 @@ Also update `version.txt` and `PRAISON_VERSION` constant.
 
 | Class | Purpose |
 |-------|---------|
-| `Bootstrap` | Plugin initialization, `posts_pre_query` injection |
-| `PostLoader` | Load/cache/filter file-based posts |
+| `Bootstrap` | Plugin initialization, `posts_pre_query` injection, virtual meta filter |
+| `PostLoader` | Load/cache/filter file-based posts, register virtual meta |
+| `IndexManager` | Incremental `_index.json` updates (add, update, remove) with flock() |
+| `AutoExporter` | Dashboard → `.md` export, Git commit/push, deletion hooks |
+| `SyncManager` | Git clone/pull/push, post-pull diff detection (A/M/D/R) |
 | `CacheManager` | Transient caching (O(1) dir-mtime key) |
 | `SmartCacheInvalidator` | Cache clear on PR merge |
 | `FrontMatterParser` | YAML parser (inline arrays, bool, int, null coercion) |

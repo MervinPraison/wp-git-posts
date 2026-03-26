@@ -55,6 +55,10 @@ nav:
   - Features:
     - File-Based Content: features/file-based-content.md
     - Export to Markdown: features/export.md
+    - Bidirectional Git Sync: features/bidirectional-sync.md
+    - Incremental Indexing: features/incremental-indexing.md
+    - Virtual Post Meta: features/virtual-post-meta.md
+    - Deletion Handling: features/deletion-handling.md
     - Collaborative Editing: features/collaborative-editing.md
     - Performance & Caching: features/performance.md
   - Guides:

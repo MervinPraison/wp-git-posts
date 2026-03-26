@@ -4,7 +4,7 @@ Tags: markdown, git, content-management, file-based, version-control
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.7.0
+Stable tag: 1.8.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -227,7 +227,19 @@ Yes, if Git is available, you can rollback any file to a previous version from t
 * HOTFIX: Category and tag archives now filter file-based posts by declared front-matter categories/tags — prevents all posts appearing on every taxonomy archive
 * HOTFIX: Cache keys now include category_name and tag query vars to prevent taxonomy archive cache collisions
 
-= 1.0.7 =
+= 1.8.0 =
+* NEW: Bidirectional Git sync — dashboard edits auto-export to Git, Git pushes auto-import to WordPress
+* NEW: Incremental index updates (O(1) per post, ~10ms) — no more full-rescan rebuilds
+* NEW: IndexManager class with atomic file operations and flock() concurrency safety
+* NEW: Deletion handling — trashing/deleting posts auto-removes .md files and updates _index.json
+* NEW: Virtual post meta via get_post_meta() — headless posts serve custom fields from frontmatter
+* NEW: registerPostsMeta() reads _index.json by slug for cache-safe meta registration
+* FIX: WordPress absint() compatibility — negative virtual IDs stored under both negative and positive keys
+* FIX: CacheManager serialization — meta registration survives Redis cache round-trips
+* FIX: AutoExporter uses git add -A to stage deletions, not just additions
+* FIX: SyncManager detects Added/Modified/Deleted/Renamed files via git diff --name-status after pull
+
+= 1.0.9 =
 * HOTFIX: CacheManager::getContentKey() - Replaced O(n) glob()+filemtime() with O(1) filemtime($dir) — critical for 100k+ file deployments
 * HOTFIX: PostLoader - Added _index.json fast path for single-slug queries (O(1) lookup vs full directory scan)
 * HOTFIX: Bootstrap::injectFilePosts() - Added is_dir() early bail to skip post types with no content directory
@@ -284,6 +296,9 @@ Yes, if Git is available, you can rollback any file to a previous version from t
 * Built-in caching system
 
 == Upgrade Notice ==
+
+= 1.8.0 =
+Major release: Bidirectional Git sync, incremental indexing, deletion handling, and get_post_meta() support for headless posts. Recommended update for all users.
 
 = 1.0.9 =
 Hotfix: Fixes invalid HTML from the Markdown fallback parser, YAML inline array and boolean parsing, permalink format, and SmartCacheInvalidator transient pattern.
