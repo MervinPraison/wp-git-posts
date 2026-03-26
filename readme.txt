@@ -4,7 +4,7 @@ Tags: markdown, git, content-management, file-based, version-control
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.6.1
+Stable tag: 1.7.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -185,6 +185,16 @@ Yes, if Git is available, you can rollback any file to a previous version from t
 4. Content directory structure
 
 == Changelog ==
+
+= 1.7.0 =
+* NEW: Getting Started guide on Settings page with content directory path, sample format, and directory structure
+* NEW: Sample "Hello from PraisonPress!" post created on activation so users see it working immediately
+* NEW: Synchronous index rebuild on settings save (no WP-Cron dependency)
+* NEW: Cache TTL as human-friendly dropdown (5 min to 24 hours)
+* NEW: Post type checkboxes show file counts, directory names, and sync status
+* NEW: Index status table shows entry counts and sync indicators
+* IMPROVED: Generic defaults (post, page) instead of project-specific types
+* IMPROVED: Better empty state messaging and onboarding
 
 = 1.6.1 =
 * CRITICAL FIX: Archive safeguard - refuses to scan >500 files without _index.json, preventing OOM

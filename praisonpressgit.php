@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PraisonAI Git Posts
  * Description: Load WordPress content from files (Markdown, JSON, YAML) without database writes, with Git-based version control
- * Version: 1.6.1
+ * Version: 1.7.0
  * Author: MervinPraison
  * Author URI: https://mer.vin
  * License: GPL v2 or later
@@ -12,7 +12,7 @@
 defined('ABSPATH') or die('Direct access not allowed');
 
 // Define constants
-define('PRAISON_VERSION', '1.6.1');
+define('PRAISON_VERSION', '1.7.0');
 define('PRAISON_PLUGIN_DIR', __DIR__);
 define('PRAISON_PLUGIN_URL', trailingslashit(plugins_url('', __FILE__)));
 
@@ -87,26 +87,108 @@ register_activation_hook(__FILE__, 'praisonpress_activate');
 register_activation_hook(__FILE__, 'praison_install');
 
 function praison_install() {
-    // Create content directory at root level (independent of WordPress)
+    // Create content directory structure
     $directories = [
         PRAISON_CONTENT_DIR,
         PRAISON_CONTENT_DIR . '/posts',
         PRAISON_CONTENT_DIR . '/pages',
-        PRAISON_CONTENT_DIR . '/lyrics',
-        PRAISON_CONTENT_DIR . '/recipes',
         PRAISON_CONTENT_DIR . '/config',
     ];
     
     foreach ($directories as $dir) {
         if (!file_exists($dir)) {
             wp_mkdir_p($dir);
-            file_put_contents($dir . '/.gitkeep', '');
         }
     }
     
-    // Auto-generate _index.json for any existing content
-    if (!wp_next_scheduled('praisonpress_rebuild_index')) {
-        wp_schedule_single_event(time() + 5, 'praisonpress_rebuild_index');
+    // Create a sample post so users can see it working immediately
+    $sample_file = PRAISON_CONTENT_DIR . '/posts/hello-from-praisonpress.md';
+    if (!file_exists($sample_file)) {
+        $sample_content = "---\n"
+            . "title: \"Hello from PraisonPress!\"\n"
+            . "slug: \"hello-from-praisonpress\"\n"
+            . "date: \"" . current_time('Y-m-d H:i:s') . "\"\n"
+            . "status: \"publish\"\n"
+            . "categories:\n"
+            . "  - \"Getting Started\"\n"
+            . "tags:\n"
+            . "  - \"sample\"\n"
+            . "  - \"praisonpress\"\n"
+            . "excerpt: \"This is a sample post created by PraisonPress. Edit or delete this file, then rebuild the index.\"\n"
+            . "---\n\n"
+            . "# Welcome to PraisonPress! 🎉\n\n"
+            . "This post is served from a **Markdown file** on the filesystem — no database required!\n\n"
+            . "## How it works\n\n"
+            . "1. Add `.md` files to subdirectories in your content folder\n"
+            . "2. Each subdirectory becomes a custom post type\n"
+            . "3. YAML front matter (between the `---` markers) defines the post metadata\n"
+            . "4. Everything below the front matter is the post content in Markdown\n\n"
+            . "## Next steps\n\n"
+            . "- Go to **Settings → PraisonPress** to enable content delivery\n"
+            . "- Add more Markdown files to the `posts/` directory\n"
+            . "- Create new directories (e.g., `recipes/`, `tutorials/`) for custom post types\n"
+            . "- Click **Rebuild Index** after adding new content\n\n"
+            . "Feel free to edit or delete this sample file!\n";
+        
+        file_put_contents($sample_file, $sample_content);
+    }
+    
+    // Generate _index.json synchronously for any existing content
+    $content_dir = PRAISON_CONTENT_DIR;
+    if (is_dir($content_dir)) {
+        $dirs = @scandir($content_dir);
+        if ($dirs) {
+            foreach ($dirs as $d) {
+                if ($d[0] === '.' || $d === 'config' || !is_dir("$content_dir/$d")) continue;
+                $md_files = glob("$content_dir/$d/*.md");
+                if (empty($md_files)) continue;
+                
+                $index = [];
+                foreach ($md_files as $file) {
+                    $raw = file_get_contents($file);
+                    if ($raw === false) continue;
+                    
+                    // Quick frontmatter parse
+                    $meta = [];
+                    if (strpos($raw, '---') === 0) {
+                        $parts = preg_split('/^---\s*$/m', $raw, 3);
+                        if (count($parts) >= 3) {
+                            $current_array = null;
+                            foreach (explode("\n", trim($parts[1])) as $line) {
+                                $line = rtrim($line);
+                                if (empty(trim($line))) continue;
+                                if (preg_match('/^\s+-\s+(.+)$/', $line, $m) && $current_array) {
+                                    $meta[$current_array][] = trim($m[1], "\" '\t");
+                                    continue;
+                                }
+                                $current_array = null;
+                                if (preg_match('/^([a-zA-Z_-]+):\s*$/', $line, $m)) {
+                                    $current_array = $m[1];
+                                    $meta[$current_array] = [];
+                                } elseif (preg_match('/^([a-zA-Z_-]+):\s*(.+)$/', $line, $m)) {
+                                    $meta[trim($m[1])] = trim($m[2], "\" '\t");
+                                }
+                            }
+                        }
+                    }
+                    
+                    $slug = $meta['slug'] ?? pathinfo($file, PATHINFO_FILENAME);
+                    $index[] = [
+                        'file'       => basename($file),
+                        'slug'       => $slug,
+                        'title'      => $meta['title'] ?? ucwords(str_replace('-', ' ', $slug)),
+                        'date'       => $meta['date'] ?? date('Y-m-d H:i:s', filemtime($file)),
+                        'modified'   => date('Y-m-d H:i:s', filemtime($file)),
+                        'status'     => $meta['status'] ?? 'publish',
+                        'excerpt'    => $meta['excerpt'] ?? '',
+                        'categories' => $meta['categories'] ?? [],
+                        'tags'       => $meta['tags'] ?? [],
+                    ];
+                }
+                
+                file_put_contents("$content_dir/$d/_index.json", json_encode($index, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            }
+        }
     }
     
     // Flush rewrite rules
