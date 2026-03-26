@@ -226,14 +226,34 @@ class PostLoader {
             $post->_praison_featured_image = $entry['featured_image'] ?? '';
             $post->_praison_custom_fields = $entry['custom_fields'] ?? $entry['custom'] ?? [];
 
-            // Store custom fields as post properties for ACF compatibility
-            $custom = $entry['custom_fields'] ?? $entry['custom'] ?? [];
-            foreach ($custom as $key => $value) {
+            // Store custom fields as post properties for ACF compatibility.
+            // The FrontMatterParser flattens nested YAML blocks, so custom field keys
+            // appear as top-level entries in the index (e.g. 'artist', 'ta_first_line').
+            // Collect them all: both $entry['custom_fields'] (if it's a dict) and
+            // any non-structural top-level keys.
+            $structural = [
+                'file', 'title', 'slug', 'status', 'author', 'date', 'modified',
+                'excerpt', 'categories', 'tags', 'featured_image', 'custom_fields', 'custom',
+            ];
+            $allMeta = [];
+            // First, merge custom_fields if it's a non-empty associative array.
+            $cf = $entry['custom_fields'] ?? $entry['custom'] ?? [];
+            if (is_array($cf) && !empty($cf) && !isset($cf[0])) {
+                $allMeta = $cf;
+            }
+            // Then, collect all top-level non-structural keys.
+            foreach ($entry as $k => $v) {
+                if (!in_array($k, $structural, true)) {
+                    $allMeta[$k] = $v;
+                }
+            }
+            // Store on post object for direct property access and ACF.
+            foreach ($allMeta as $key => $value) {
                 $post->{$key} = $value;
             }
             // Register with Bootstrap's virtual meta registry for get_post_meta() interception.
-            if (!empty($custom)) {
-                \PraisonPress\Core\Bootstrap::registerVirtualMeta($post->ID, $custom);
+            if (!empty($allMeta)) {
+                \PraisonPress\Core\Bootstrap::registerVirtualMeta($post->ID, $allMeta);
             }
             
             $posts[] = $post;
