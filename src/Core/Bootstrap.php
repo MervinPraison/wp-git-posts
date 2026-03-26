@@ -493,6 +493,7 @@ class Bootstrap {
                     $query->get('name') ?: 'archive'
                 ));
             }
+            $this->registerPostsMeta($file_posts);
             return $file_posts;
         }
         
@@ -523,7 +524,47 @@ class Bootstrap {
             }
         }
         
+        $this->registerPostsMeta($merged);
         return $merged;
+    }
+    
+    /**
+     * Register virtual meta for an array of file-based posts.
+     *
+     * Called in injectFilePosts() to ensure meta is registered regardless
+     * of whether posts came from cache or fresh load.
+     *
+     * @param array $posts Array of WP_Post objects.
+     */
+    private function registerPostsMeta( array $posts ): void {
+        foreach ( $posts as $post ) {
+            if ( ! is_object( $post ) || $post->ID >= 0 ) {
+                continue; // Skip real DB posts.
+            }
+            
+            // Collect all non-structural properties as meta.
+            $structural = [
+                'ID', 'post_author', 'post_date', 'post_date_gmt', 'post_content',
+                'post_title', 'post_excerpt', 'post_status', 'comment_status',
+                'ping_status', 'post_password', 'post_name', 'to_ping', 'pinged',
+                'post_modified', 'post_modified_gmt', 'post_content_filtered',
+                'post_parent', 'guid', 'menu_order', 'post_type', 'post_mime_type',
+                'comment_count', 'filter',
+                '_praison_file', '_praison_categories', '_praison_tags',
+                '_praison_featured_image', '_praison_custom_fields',
+            ];
+            
+            $meta = [];
+            foreach ( get_object_vars( $post ) as $key => $value ) {
+                if ( ! in_array( $key, $structural, true ) && strpos( $key, '_praison_' ) !== 0 ) {
+                    $meta[ $key ] = $value;
+                }
+            }
+            
+            if ( ! empty( $meta ) ) {
+                self::registerVirtualMeta( $post->ID, $meta );
+            }
+        }
     }
     
     /**
