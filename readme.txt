@@ -4,7 +4,7 @@ Tags: markdown, git, content-management, file-based, version-control
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.6.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -186,17 +186,24 @@ Yes, if Git is available, you can rollback any file to a previous version from t
 
 == Changelog ==
 
-= 1.0.0 =
-* Initial release
-* File-based content management
-* Markdown parser with YAML front matter support
-* Dynamic custom post type discovery
-* Custom URL routing
-* Built-in caching system
-* Git version control integration
-* Admin interface with version history
-* Auto-update detection for file changes
-* WordPress filter compatibility
+= 1.6.1 =
+* CRITICAL FIX: Archive safeguard - refuses to scan >500 files without _index.json, preventing OOM
+* Added WordPress Settings page admin notice for index rebuild feedback
+* Removed disconnected content_dir settings field
+* Fixed duplicate docblock on loadSinglePost
+
+= 1.6.0 =
+* NEW: WordPress Settings page for user-friendly configuration
+* NEW: Index Status table with "Rebuild Index Now" button
+* All settings stored in wp_options - no ini files or CLI needed
+* Auto-generates _index.json on plugin activation
+
+= 1.5.0 =
+* PERFORMANCE: Lazy constructor - zero filesystem I/O at plugin load
+* PERFORMANCE: loadFromIndex() creates WP_Post from index metadata only
+* PERFORMANCE: loadSinglePost() direct slug lookup - 1 file read (was: full scan)
+* NEW: content.enabled safety check - plugin does nothing unless enabled
+* NEW: Cache stampede protection with wp_cache_add lock
 
 = 1.0.9 =
 * HOTFIX: FrontMatterParser - Added inline YAML array support ([a, b, c]), boolean coercion (true/false → PHP bool), numeric coercion, and null coercion

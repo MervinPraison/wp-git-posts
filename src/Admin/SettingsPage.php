@@ -74,19 +74,6 @@ class SettingsPage {
             ['field' => 'post_types']
         );
         
-        add_settings_field(
-            'content_dir',
-            'Content Directory',
-            [$this, 'renderTextField'],
-            'praison-settings',
-            'praisonpress_content',
-            [
-                'field' => 'content_dir',
-                'description' => 'Path to the content directory. Default: <code>' . esc_html(PRAISON_CONTENT_DIR) . '</code>',
-                'placeholder' => PRAISON_CONTENT_DIR,
-            ]
-        );
-        
         // ── Section: Performance ──
         add_settings_section(
             'praisonpress_performance',
@@ -141,7 +128,6 @@ class SettingsPage {
         return [
             'content_enabled' => false,
             'post_types'      => ['lyrics', 'chords'],
-            'content_dir'     => '',
             'cache_enabled'   => true,
             'cache_ttl'       => 3600,
         ];
@@ -164,7 +150,6 @@ class SettingsPage {
         $sanitized['content_enabled'] = !empty($input['content_enabled']);
         $sanitized['cache_enabled']   = !empty($input['cache_enabled']);
         $sanitized['cache_ttl']       = absint($input['cache_ttl'] ?? 3600);
-        $sanitized['content_dir']     = sanitize_text_field($input['content_dir'] ?? '');
         
         // Post types: array of sanitized slugs
         $sanitized['post_types'] = [];
@@ -335,6 +320,16 @@ class SettingsPage {
             <h1>PraisonPress Settings</h1>
             
             <?php settings_errors(); ?>
+            
+            <?php
+            // Show index rebuild result notice
+            if (isset($_GET['index_rebuilt'])) {
+                $success = $_GET['index_rebuilt'] === '1';
+                $class = $success ? 'notice-success' : 'notice-error';
+                $msg   = $success ? 'Content index rebuilt successfully.' : 'Index rebuild failed — check file permissions.';
+                echo '<div class="notice ' . $class . ' is-dismissible"><p>' . esc_html($msg) . '</p></div>';
+            }
+            ?>
             
             <form method="post" action="options.php">
                 <?php

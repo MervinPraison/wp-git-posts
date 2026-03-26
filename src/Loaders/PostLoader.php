@@ -135,6 +135,22 @@ class PostLoader {
             return [];
         }
         
+        // SAFETY: refuse to scan large directories without an index.
+        // Without _index.json, every file is read via file_get_contents().
+        // For 18K+ files this causes OOM/timeout.
+        $max_scan = apply_filters('praisonpress_max_scan_files', 500);
+        if (count($files) > $max_scan) {
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf(
+                    'PraisonPress: Refusing to scan %d files in %s without _index.json (limit: %d). Run "wp praison index" or use the Settings page to rebuild the index.',
+                    count($files),
+                    $this->postsDir,
+                    $max_scan
+                ));
+            }
+            return [];
+        }
+        
         $posts = [];
         
         foreach ($files as $file) {
@@ -406,14 +422,8 @@ class PostLoader {
     }
     
     /**
-     * Get posts directly (for helper functions)
-     * 
-     * @param array $args Query arguments
-     * @return array Array of WP_Post objects
-     */
-    /**
      * Load a single post by slug.
-     * Checks _index.json first for an O(1) file lookup, then falls back to full scan.
+     * Checks _index.json first for an O(1) file lookup, then falls back to direct file.
      *
      * @param string $slug Post slug
      * @return array Array with 0 or 1 WP_Post objects
