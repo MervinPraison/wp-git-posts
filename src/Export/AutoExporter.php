@@ -3,6 +3,8 @@ namespace PraisonPress\Export;
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
+use PraisonPress\Index\IndexManager;
+
 /**
  * Auto-Export on Publish
  *
@@ -38,6 +40,11 @@ class AutoExporter {
 
         // Fire on post status transitions (pending→publish, draft→publish, etc.)
         add_action( 'transition_post_status', [ $this, 'onStatusTransition' ], 20, 3 );
+
+        // Deletion hooks — remove .md file and index entry
+        add_action( 'wp_trash_post', [ $this, 'onTrashPost' ], 20 );
+        add_action( 'before_delete_post', [ $this, 'onTrashPost' ], 20 ); // permanent delete
+        add_action( 'untrash_post', [ $this, 'onUntrashPost' ], 20 );
 
         // Process the scheduled export
         add_action( 'praison_auto_export_post', [ $this, 'exportAndSync' ] );
@@ -137,6 +144,11 @@ class AutoExporter {
             return;
         }
 
+        // Incremental index update (~10ms instead of full rebuild).
+        $date_prefix = gmdate( 'Y-m-d', strtotime( $post->post_date ) );
+        $md_file     = $output_dir . '/' . $date_prefix . '-' . $post->post_name . '.md';
+        IndexManager::addOrUpdate( $post->post_type, $post->post_name, $md_file );
+
         // Commit to Git if content directory is a git repo
         if ( ! $this->isPushEnabled() ) {
             return;
@@ -146,9 +158,55 @@ class AutoExporter {
     }
 
     /**
+     * Handle post trash / permanent delete: remove .md file + index entry.
+     */
+    public function onTrashPost( int $post_id ): void {
+        $post = get_post( $post_id );
+        if ( ! $post ) {
+            return;
+        }
+
+        // Check if this post type has an export directory.
+        $exportDir = $this->exportConfig->getExportDirectory( $post->post_type );
+        if ( empty( $exportDir ) ) {
+            return;
+        }
+
+        $output_dir  = PRAISON_CONTENT_DIR . '/' . $post->post_type;
+        $date_prefix = gmdate( 'Y-m-d', strtotime( $post->post_date ) );
+        $md_file     = $output_dir . '/' . $date_prefix . '-' . $post->post_name . '.md';
+
+        // Delete the .md file.
+        if ( file_exists( $md_file ) ) {
+            unlink( $md_file );
+        }
+        // Also try without date prefix (older export format).
+        $md_file_alt = $output_dir . '/' . $post->post_name . '.md';
+        if ( file_exists( $md_file_alt ) ) {
+            unlink( $md_file_alt );
+        }
+
+        // Remove from index.
+        IndexManager::remove( $post->post_type, $post->post_name );
+
+        // Push deletion to Git.
+        if ( $this->isPushEnabled() ) {
+            $this->commitAndPush( $post, 'Deleted' );
+        }
+    }
+
+    /**
+     * Handle untrash: re-export the post and add back to index.
+     */
+    public function onUntrashPost( int $post_id ): void {
+        // Schedule re-export (reuses existing export logic).
+        wp_schedule_single_event( time(), 'praison_auto_export_post', [ $post_id ] );
+    }
+
+    /**
      * Commit the exported file and push to remote
      */
-    private function commitAndPush( \WP_Post $post ): void {
+    private function commitAndPush( \WP_Post $post, string $action = 'Auto-export' ): void {
         if ( ! is_dir( PRAISON_CONTENT_DIR . '/.git' ) ) {
             return;
         }
@@ -157,7 +215,7 @@ class AutoExporter {
         chdir( PRAISON_CONTENT_DIR );
 
         // Stage all changes in the post type directory
-        exec( 'git add ' . escapeshellarg( $post->post_type ) . '/ 2>&1', $addOutput, $addReturn );
+        exec( 'git add -A ' . escapeshellarg( $post->post_type ) . '/ 2>&1', $addOutput, $addReturn );
 
         // Check if there are staged changes
         exec( 'git diff --cached --quiet 2>&1', $diffOutput, $diffReturn );
@@ -169,7 +227,8 @@ class AutoExporter {
 
         // Commit
         $message = sprintf(
-            'Auto-export: %s "%s" (%s)',
+            '%s: %s "%s" (%s)',
+            $action,
             $post->post_type,
             $post->post_title,
             $post->post_name

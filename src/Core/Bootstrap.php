@@ -21,6 +21,12 @@ class Bootstrap {
     private static $parsedConfig = null;
     
     /**
+     * Virtual post meta registry — populated by PostLoader, consumed by get_post_metadata filter.
+     * Structure: [ post_id => [ 'key' => value, ... ] ]
+     */
+    private static $virtualMeta = [];
+    
+    /**
      * Initialize the plugin
      */
     public static function init() {
@@ -76,6 +82,9 @@ class Bootstrap {
         
         // Virtual post injection — lazy: actual work deferred to first call
         add_filter('posts_pre_query', [$this, 'injectFilePosts'], 10, 2);
+        
+        // Intercept get_post_meta() for virtual (negative-ID) headless posts
+        add_filter('get_post_metadata', [$this, 'interceptVirtualMeta'], 10, 4);
         
         // Register Settings page in admin
         if (is_admin()) {
@@ -150,6 +159,62 @@ class Bootstrap {
             $autoExporter = new \PraisonPress\Export\AutoExporter();
             $autoExporter->register();
         }
+    }
+    
+    /**
+     * Register virtual meta for a headless post (called by PostLoader).
+     *
+     * @param int   $post_id Negative virtual post ID.
+     * @param array $meta    Associative array of meta key => value.
+     */
+    public static function registerVirtualMeta( int $post_id, array $meta ): void {
+        self::$virtualMeta[ $post_id ] = $meta;
+    }
+    
+    /**
+     * Intercept get_post_meta() for virtual (negative-ID) headless posts.
+     *
+     * Returns custom_fields values from frontmatter, allowing templates
+     * using get_field(), get_post_meta(), etc. to work with headless content.
+     *
+     * Performance: zero overhead for real posts — early return on positive IDs.
+     *
+     * @param mixed  $value    Existing value (null = not filtered yet).
+     * @param int    $post_id  Post ID.
+     * @param string $meta_key Meta key being requested.
+     * @param bool   $single   Whether to return a single value.
+     * @return mixed
+     */
+    public function interceptVirtualMeta( $value, $post_id, $meta_key, $single ) {
+        // EARLY RETURN: only intercept virtual (negative-ID) posts.
+        if ( $post_id >= 0 ) {
+            return $value;
+        }
+        
+        if ( ! isset( self::$virtualMeta[ $post_id ] ) ) {
+            return $value;
+        }
+        
+        $meta = self::$virtualMeta[ $post_id ];
+        
+        // Return all meta if no specific key requested.
+        if ( empty( $meta_key ) ) {
+            $result = [];
+            foreach ( $meta as $k => $v ) {
+                $result[ $k ] = [ $v ];
+            }
+            return $result;
+        }
+        
+        // Return specific key if it exists.
+        if ( isset( $meta[ $meta_key ] ) ) {
+            // WordPress expects get_post_metadata filter to return an array
+            // whose first element is the actual value, when $single is true.
+            return [ $meta[ $meta_key ] ];
+        }
+        
+        // Key not in our registry — fall through to DB.
+        return $value;
     }
     
     /**

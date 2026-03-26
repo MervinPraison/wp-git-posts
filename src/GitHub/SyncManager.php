@@ -288,7 +288,93 @@ class SyncManager {
             ];
         }
         
+        $oldDir = getcwd();
+        chdir($this->contentDir);
+        
+        // Record HEAD before pull for diff comparison.
+        exec('git rev-parse HEAD 2>&1', $beforeOutput);
+        $beforeRef = isset($beforeOutput[0]) ? trim($beforeOutput[0]) : '';
+        
+        chdir($oldDir);
+        
         // Pull changes
-        return $this->pullFromRemote();
+        $result = $this->pullFromRemote();
+        
+        if ($result['success'] && !empty($beforeRef)) {
+            // Detect changed files and do incremental index updates.
+            $this->processChangedFiles($beforeRef);
+        }
+        
+        return $result;
+    }
+    
+    /**
+     * Process changed files after a pull — incremental index updates.
+     *
+     * @param string $beforeRef Git ref before the pull.
+     */
+    private function processChangedFiles(string $beforeRef): void {
+        $oldDir = getcwd();
+        chdir($this->contentDir);
+        
+        // Get list of changed files with status: A(dded), M(odified), D(eleted), R(enamed).
+        exec('git diff --name-status ' . escapeshellarg($beforeRef) . '..HEAD 2>&1', $diffOutput, $diffReturn);
+        
+        chdir($oldDir);
+        
+        if ($diffReturn !== 0 || empty($diffOutput)) {
+            return;
+        }
+        
+        // Process each changed file.
+        foreach ($diffOutput as $line) {
+            // Format: "A\tlyrics/my-song.md" or "R100\tlyrics/old.md\tlyrics/new.md"
+            $parts = preg_split('/\t+/', $line);
+            if (count($parts) < 2) {
+                continue;
+            }
+            
+            $status = $parts[0];
+            $file   = $parts[1];
+            
+            // Only process .md files (skip _index.json, .gitignore, etc).
+            if (substr($file, -3) !== '.md' || strpos(basename($file), '_') === 0) {
+                continue;
+            }
+            
+            // Extract post type from path (first directory component).
+            $pathParts = explode('/', $file);
+            if (count($pathParts) < 2) {
+                continue;
+            }
+            $type = $pathParts[0];
+            
+            $fullPath = $this->contentDir . '/' . $file;
+            $slug     = pathinfo(basename($file), PATHINFO_FILENAME);
+            
+            if ($status === 'D') {
+                // Deleted file — remove from index.
+                \PraisonPress\Index\IndexManager::remove($type, $slug);
+            } elseif (strpos($status, 'R') === 0 && isset($parts[2])) {
+                // Renamed: remove old, add new.
+                $oldSlug = pathinfo(basename($parts[1]), PATHINFO_FILENAME);
+                \PraisonPress\Index\IndexManager::remove($type, $oldSlug);
+                
+                $newFile = $this->contentDir . '/' . $parts[2];
+                $newSlug = pathinfo(basename($parts[2]), PATHINFO_FILENAME);
+                $newType = explode('/', $parts[2])[0] ?? $type;
+                \PraisonPress\Index\IndexManager::addOrUpdate($newType, $newSlug, $newFile);
+            } else {
+                // Added or Modified — upsert in index.
+                \PraisonPress\Index\IndexManager::addOrUpdate($type, $slug, $fullPath);
+            }
+        }
+        
+        if (get_option('praisonpress_qm_logging')) {
+            do_action('qm/info', sprintf(
+                '[PraisonPress] Webhook: processed %d file change(s) from git pull',
+                count($diffOutput)
+            ));
+        }
     }
 }

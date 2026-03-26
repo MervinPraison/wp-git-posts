@@ -231,6 +231,10 @@ class PostLoader {
             foreach ($custom as $key => $value) {
                 $post->{$key} = $value;
             }
+            // Register with Bootstrap's virtual meta registry for get_post_meta() interception.
+            if (!empty($custom)) {
+                \PraisonPress\Core\Bootstrap::registerVirtualMeta($post->ID, $custom);
+            }
             
             $posts[] = $post;
         }
@@ -304,6 +308,8 @@ class PostLoader {
                 // Store in the post object so ACF can access it
                 $post->{$key} = $value;
             }
+            // Register with Bootstrap's virtual meta registry for get_post_meta() interception.
+            \PraisonPress\Core\Bootstrap::registerVirtualMeta($post->ID, $metadata['custom_fields']);
         }
         
         return $post;
