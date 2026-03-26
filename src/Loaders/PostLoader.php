@@ -321,15 +321,30 @@ class PostLoader {
         $post->_praison_featured_image = $metadata['featured_image'] ?? '';
         $post->_praison_custom_fields = $metadata['custom_fields'] ?? [];
         
-        // Store custom fields as post meta for ACF compatibility
-        // This allows get_field() and other ACF functions to work
-        if (!empty($metadata['custom_fields'])) {
-            foreach ($metadata['custom_fields'] as $key => $value) {
-                // Store in the post object so ACF can access it
-                $post->{$key} = $value;
+        // Store custom fields as post meta for ACF compatibility.
+        // The FrontMatterParser flattens nested YAML, so custom field keys
+        // appear as top-level metadata keys (e.g. 'artist', 'ta_first_line').
+        $structural = [
+            'title', 'slug', 'status', 'author', 'date', 'modified',
+            'excerpt', 'categories', 'tags', 'featured_image', 'custom_fields', 'custom', 'content',
+        ];
+        $allMeta = [];
+        // Merge custom_fields if it's a non-empty associative array.
+        $cf = $metadata['custom_fields'] ?? [];
+        if (is_array($cf) && !empty($cf) && !isset($cf[0])) {
+            $allMeta = $cf;
+        }
+        // Collect all top-level non-structural keys.
+        foreach ($metadata as $k => $v) {
+            if (!in_array($k, $structural, true)) {
+                $allMeta[$k] = $v;
             }
-            // Register with Bootstrap's virtual meta registry for get_post_meta() interception.
-            \PraisonPress\Core\Bootstrap::registerVirtualMeta($post->ID, $metadata['custom_fields']);
+        }
+        foreach ($allMeta as $key => $value) {
+            $post->{$key} = $value;
+        }
+        if (!empty($allMeta)) {
+            \PraisonPress\Core\Bootstrap::registerVirtualMeta($post->ID, $allMeta);
         }
         
         return $post;
