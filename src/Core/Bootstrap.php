@@ -47,16 +47,24 @@ class Bootstrap {
     }
     
     /**
-     * Check if file-based content delivery is enabled in site-config.ini
+     * Check if file-based content delivery is enabled.
+     * Priority: wp_options (Settings page) > site-config.ini > default (false)
      */
     private function isContentEnabled() {
-        $config = self::getConfig();
-        // Default to false if not set — explicit opt-in required
-        if (!isset($config['content']['enabled'])) {
-            return false;
+        // 1. Check WordPress options (Settings page)
+        $options = get_option('praisonpress_options', []);
+        if (isset($options['content_enabled'])) {
+            return (bool) $options['content_enabled'];
         }
-        $val = $config['content']['enabled'];
-        return filter_var($val, FILTER_VALIDATE_BOOLEAN);
+        
+        // 2. Fallback to site-config.ini
+        $config = self::getConfig();
+        if (isset($config['content']['enabled'])) {
+            return filter_var($config['content']['enabled'], FILTER_VALIDATE_BOOLEAN);
+        }
+        
+        // 3. Default: disabled (safe)
+        return false;
     }
     
     /**
@@ -69,10 +77,22 @@ class Bootstrap {
         // Virtual post injection — lazy: actual work deferred to first call
         add_filter('posts_pre_query', [$this, 'injectFilePosts'], 10, 2);
         
-        // Initialize export page early (before admin_menu)
+        // Register Settings page in admin
         if (is_admin()) {
             new ExportPage();
+            
+            // Settings page (WordPress-native config)
+            if (file_exists(PRAISON_PLUGIN_DIR . '/src/Admin/SettingsPage.php')) {
+                $settingsPage = new \PraisonPress\Admin\SettingsPage();
+                $settingsPage->register();
+            }
         }
+        
+        // Register index rebuild handler (triggered by Settings page button)
+        add_action('admin_post_praison_rebuild_index', [$this, 'handleRebuildIndex']);
+        
+        // Register background index rebuild (triggered on settings save)
+        add_action('praisonpress_rebuild_index', [$this, 'doBackgroundIndexRebuild']);
         
         // Admin features (priority 10 - default)
         add_action('admin_menu', [$this, 'addAdminMenu']);
@@ -133,24 +153,30 @@ class Bootstrap {
     }
     
     /**
-     * Get the allowed post types from site-config.ini
-     * 
-     * @return array|null Array of allowed types, or null if setting doesn't exist (allow all)
+     * Get the allowed post types.
+     * Priority: wp_options (Settings page) > site-config.ini > null (allow all)
      */
     private function getAllowedPostTypes() {
         if ($this->allowedPostTypes !== null) {
-            // false is our internal sentinel for "checked but not found" → return null (allow all)
             return $this->allowedPostTypes === false ? null : $this->allowedPostTypes;
         }
         
+        // 1. Check WordPress options (Settings page)
+        $options = get_option('praisonpress_options', []);
+        if (!empty($options['post_types']) && is_array($options['post_types'])) {
+            $this->allowedPostTypes = $options['post_types'];
+            return $this->allowedPostTypes;
+        }
+        
+        // 2. Fallback to site-config.ini
         $config = self::getConfig();
         if (isset($config['content']['post_types']) && is_array($config['content']['post_types'])) {
             $this->allowedPostTypes = $config['content']['post_types'];
             return $this->allowedPostTypes;
         }
         
-        $this->allowedPostTypes = false; // Use false internally to denote "checked but not found"
-        return null; // Return null to mean "allow all"
+        $this->allowedPostTypes = false;
+        return null;
     }
 
     /**
@@ -966,6 +992,113 @@ repository_url = "https://github.com/MervinPraison/PraisonPressContent"</pre>
             </a>
         </p>
         <?php
+    }
+    
+    /**
+     * Handle "Rebuild Index Now" button from Settings page
+     */
+    public function handleRebuildIndex() {
+        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'praison_rebuild_index')) {
+            wp_die('Security check failed');
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        // Run index rebuild synchronously
+        $result = $this->doBackgroundIndexRebuild();
+        
+        wp_safe_redirect(add_query_arg([
+            'page' => 'praison-settings',
+            'index_rebuilt' => $result ? '1' : '0',
+        ], admin_url('admin.php')));
+        exit;
+    }
+    
+    /**
+     * Rebuild _index.json for all content types.
+     * Called from: Settings page button, background cron, activation hook.
+     * Uses the existing IndexCommand logic.
+     * 
+     * @return bool True on success
+     */
+    public function doBackgroundIndexRebuild() {
+        $content_dir = PRAISON_CONTENT_DIR;
+        if (!is_dir($content_dir)) {
+            return false;
+        }
+        
+        // Reuse the IndexCommand's indexing logic
+        if (!class_exists('PraisonPress\\CLI\\IndexCommand')) {
+            $file = PRAISON_PLUGIN_DIR . '/src/CLI/IndexCommand.php';
+            if (file_exists($file)) {
+                require_once $file;
+            }
+        }
+        
+        $success = true;
+        $dirs = @scandir($content_dir);
+        if (!$dirs) return false;
+        
+        foreach ($dirs as $dir) {
+            if ($dir[0] === '.' || $dir === 'config' || !is_dir($content_dir . '/' . $dir)) {
+                continue;
+            }
+            
+            $type_dir = $content_dir . '/' . $dir;
+            $md_files = glob($type_dir . '/*.md');
+            if (empty($md_files)) continue;
+            
+            // Build index data
+            $index = [];
+            require_once PRAISON_PLUGIN_DIR . '/src/Parsers/FrontMatterParser.php';
+            $parser = new \PraisonPress\Parsers\FrontMatterParser();
+            
+            foreach ($md_files as $file) {
+                $content = @file_get_contents($file);
+                if ($content === false) continue;
+                
+                $parsed = $parser->parse($content);
+                $meta   = $parsed['meta'] ?? [];
+                $slug   = $meta['slug'] ?? pathinfo($file, PATHINFO_FILENAME);
+                
+                $entry = [
+                    'file'       => basename($file),
+                    'slug'       => $slug,
+                    'title'      => $meta['title'] ?? ucwords(str_replace('-', ' ', $slug)),
+                    'date'       => $meta['date'] ?? date('Y-m-d H:i:s', filemtime($file)),
+                    'modified'   => date('Y-m-d H:i:s', filemtime($file)),
+                    'status'     => $meta['status'] ?? 'publish',
+                    'excerpt'    => $meta['excerpt'] ?? '',
+                    'categories' => $meta['categories'] ?? [],
+                    'tags'       => $meta['tags'] ?? [],
+                ];
+                
+                // Include custom fields from frontmatter
+                $reserved = ['title', 'date', 'slug', 'status', 'excerpt', 'categories', 'tags', 'featured_image', 'author'];
+                $custom   = [];
+                foreach ($meta as $k => $v) {
+                    if (!in_array($k, $reserved)) {
+                        $custom[$k] = $v;
+                    }
+                }
+                if (!empty($custom)) {
+                    $entry['custom_fields'] = $custom;
+                }
+                
+                $index[] = $entry;
+            }
+            
+            // Write _index.json
+            $index_path = $type_dir . '/_index.json';
+            $written = @file_put_contents($index_path, json_encode($index, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            if ($written === false) {
+                $success = false;
+            }
+        }
+        
+        return $success;
     }
     
     /**

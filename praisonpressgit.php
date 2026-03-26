@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PraisonAI Git Posts
  * Description: Load WordPress content from files (Markdown, JSON, YAML) without database writes, with Git-based version control
- * Version: 1.5.0
+ * Version: 1.6.0
  * Author: MervinPraison
  * Author URI: https://mer.vin
  * License: GPL v2 or later
@@ -12,7 +12,7 @@
 defined('ABSPATH') or die('Direct access not allowed');
 
 // Define constants
-define('PRAISON_VERSION', '1.5.0');
+define('PRAISON_VERSION', '1.6.0');
 define('PRAISON_PLUGIN_DIR', __DIR__);
 define('PRAISON_PLUGIN_URL', trailingslashit(plugins_url('', __FILE__)));
 
@@ -102,6 +102,11 @@ function praison_install() {
             wp_mkdir_p($dir);
             file_put_contents($dir . '/.gitkeep', '');
         }
+    }
+    
+    // Auto-generate _index.json for any existing content
+    if (!wp_next_scheduled('praisonpress_rebuild_index')) {
+        wp_schedule_single_event(time() + 5, 'praisonpress_rebuild_index');
     }
     
     // Flush rewrite rules
