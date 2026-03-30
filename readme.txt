@@ -4,7 +4,7 @@ Tags: markdown, git, content-management, file-based, version-control
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.8.0
+Stable tag: 1.8.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -226,6 +226,14 @@ Yes, if Git is available, you can rollback any file to a previous version from t
 * HOTFIX: Draft posts now correctly excluded by default from archives, feeds, and taxonomy pages (default to publish-only)
 * HOTFIX: Category and tag archives now filter file-based posts by declared front-matter categories/tags — prevents all posts appearing on every taxonomy archive
 * HOTFIX: Cache keys now include category_name and tag query vars to prevent taxonomy archive cache collisions
+
+= 1.8.1 =
+* CRITICAL FIX: loadSinglePost() — direct .md file lookup first, eliminates 49.5 MB peak memory spike per cache-miss request
+* CRITICAL FIX: registerPostsMeta() — reads meta from post object properties instead of re-loading full _index.json (eliminates double-registration, saves 34 MB)
+* FIX: Date-prefixed filename support in direct lookup (e.g. 2024-01-15-my-song.md via glob fallback)
+* FIX: PRAISON_VERSION constant now matches plugin header version (was stuck at 1.7.0)
+* PERF: Single-page cache-miss peak memory reduced from 187.5 MB to ~138 MB
+* PERF: Archive page requests no longer load _index.json twice
 
 = 1.8.0 =
 * NEW: Bidirectional Git sync — dashboard edits auto-export to Git, Git pushes auto-import to WordPress

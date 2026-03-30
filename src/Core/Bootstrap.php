@@ -537,52 +537,50 @@ class Bootstrap {
      * @param array $posts Array of WP_Post objects.
      */
     private function registerPostsMeta( array $posts ): void {
-        static $indexCache = [];
-        
-        $structural = [
-            'file', 'title', 'slug', 'status', 'author', 'date', 'modified',
-            'excerpt', 'categories', 'tags', 'featured_image', 'custom_fields', 'custom',
-        ];
+        // WP_Post standard properties — everything else is a custom field.
+        static $wpProps = null;
+        if ( $wpProps === null ) {
+            $wpProps = [
+                'ID', 'post_author', 'post_date', 'post_date_gmt', 'post_content',
+                'post_title', 'post_excerpt', 'post_status', 'comment_status',
+                'ping_status', 'post_password', 'post_name', 'to_ping', 'pinged',
+                'post_modified', 'post_modified_gmt', 'post_content_filtered',
+                'post_parent', 'guid', 'menu_order', 'post_type', 'post_mime_type',
+                'comment_count', 'filter',
+                // Plugin internal properties
+                '_praison_file', '_praison_categories', '_praison_tags',
+                '_praison_featured_image', '_praison_custom_fields',
+            ];
+        }
         
         foreach ( $posts as $post ) {
             if ( ! is_object( $post ) || $post->ID >= 0 ) {
                 continue;
             }
             
-            $type = $post->post_type;
-            $slug = $post->post_name;
-            
-            // Load and cache the index for this post type.
-            if ( ! isset( $indexCache[ $type ] ) ) {
-                $indexFile = PRAISON_CONTENT_DIR . '/' . $type . '/_index.json';
-                if ( file_exists( $indexFile ) ) {
-                    $data = json_decode( file_get_contents( $indexFile ), true );
-                    if ( is_array( $data ) ) {
-                        // Build a slug-keyed lookup.
-                        $lookup = [];
-                        foreach ( $data as $entry ) {
-                            if ( ! empty( $entry['slug'] ) ) {
-                                $lookup[ $entry['slug'] ] = $entry;
-                            }
-                        }
-                        $indexCache[ $type ] = $lookup;
-                    } else {
-                        $indexCache[ $type ] = [];
-                    }
-                } else {
-                    $indexCache[ $type ] = [];
-                }
-            }
-            
-            if ( ! isset( $indexCache[ $type ][ $slug ] ) ) {
+            // Skip if meta already registered (by loadFromIndex or createPostObject).
+            // This prevents the double-registration bug where _index.json was loaded
+            // TWICE per request (once in PostLoader, again here).
+            $abs_id = abs( $post->ID );
+            if ( isset( self::$virtualMeta[ $abs_id ] ) ) {
                 continue;
             }
             
-            $entry = $indexCache[ $type ][ $slug ];
+            // Collect meta from the post object's dynamic properties.
+            // PostLoader::loadFromIndex() and createPostObject() set custom fields
+            // directly on the WP_Post object (e.g. $post->ta_first_line, $post->artist).
+            // These survive serialization through the transient cache.
             $meta = [];
             
-            foreach ( $entry as $k => $v ) {
-                if ( ! in_array( $k, $structural, true ) ) {
+            // Start with _praison_custom_fields if available.
+            if ( ! empty( $post->_praison_custom_fields ) && is_array( $post->_praison_custom_fields ) ) {
+                $meta = $post->_praison_custom_fields;
+            }
+            
+            // Collect any dynamic properties (ta_first_line, artist, en_first_line, etc.)
+            // that aren't standard WP_Post properties and don't start with underscore.
+            foreach ( get_object_vars( $post ) as $k => $v ) {
+                if ( ! in_array( $k, $wpProps, true ) && strpos( $k, '_' ) !== 0 ) {
                     $meta[ $k ] = $v;
                 }
             }

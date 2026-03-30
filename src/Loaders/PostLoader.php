@@ -470,8 +470,31 @@ class PostLoader {
      * @return array Array with 0 or 1 WP_Post objects
      */
     private function loadSinglePost(string $slug): array {
-        $indexFile = $this->postsDir . '/_index.json';
+        // 1. Fast path: direct file lookup by slug (O(1), ~0 MB overhead).
+        //    This avoids loading the full _index.json (16-23 MB → 34-50 MB decoded)
+        //    which would spike peak memory past the 150M PHP limit.
+        $file = $this->postsDir . '/' . $slug . '.md';
+        if (file_exists($file)) {
+            $content = file_get_contents($file);
+            $parsed  = $this->frontMatterParser->parse($content);
+            $post    = $this->createPostObject($parsed, $file);
+            return $post ? [$post] : [];
+        }
 
+        // 2. Try date-prefixed files (e.g. 2024-01-15-my-song.md from AutoExporter).
+        $matches = glob($this->postsDir . '/*-' . $slug . '.md');
+        if (!empty($matches)) {
+            $file    = $matches[0];
+            $content = file_get_contents($file);
+            $parsed  = $this->frontMatterParser->parse($content);
+            $post    = $this->createPostObject($parsed, $file);
+            return $post ? [$post] : [];
+        }
+
+        // 3. Last resort: check _index.json (slug may not match any filename pattern).
+        //    This path loads the full index into memory — only reached when the slug
+        //    doesn't directly correspond to a filename on disk.
+        $indexFile = $this->postsDir . '/_index.json';
         if (file_exists($indexFile)) {
             $index = json_decode(file_get_contents($indexFile), true);
             if (is_array($index)) {
@@ -481,17 +504,7 @@ class PostLoader {
                         return $post ? [$post] : [];
                     }
                 }
-                return []; // slug not in index → post doesn't exist
             }
-        }
-
-        // Fallback: direct file lookup by slug (no full scan)
-        $file = $this->postsDir . '/' . $slug . '.md';
-        if (file_exists($file)) {
-            $content = file_get_contents($file);
-            $parsed  = $this->frontMatterParser->parse($content);
-            $post    = $this->createPostObject($parsed, $file);
-            return $post ? [$post] : [];
         }
 
         return [];
