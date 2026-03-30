@@ -159,6 +159,13 @@ class Bootstrap {
             $autoExporter = new \PraisonPress\Export\AutoExporter();
             $autoExporter->register();
         }
+        
+        // YARPP compatibility: headless posts have negative IDs that don't exist
+        // in wp_posts, so YARPP's SQL queries return 0 results. This bridge
+        // temporarily swaps the global $post->ID to the real DB ID (by slug+type)
+        // before YARPP's the_content filter runs (priority 1200).
+        add_filter('the_content', [$this, 'yarppBridgeSwapId'], 1199);
+        add_filter('the_content', [$this, 'yarppBridgeRestoreId'], 1201);
     }
     
     /**
@@ -589,6 +596,70 @@ class Bootstrap {
                 self::registerVirtualMeta( $post->ID, $meta );
             }
         }
+    }
+    
+    /**
+     * Saved original post ID before YARPP swap.
+     * @var int|null
+     */
+    private $yarppOriginalId = null;
+    
+    /**
+     * YARPP Bridge: Swap headless post ID → real DB ID (runs at priority 1199,
+     * just before YARPP's the_content filter at priority 1200).
+     *
+     * YARPP uses get_the_ID() which returns the global $post->ID. For headless
+     * posts this is negative (no DB row), making YARPP's SQL queries return 0.
+     * This bridge looks up the real DB post by slug+type and temporarily swaps it.
+     *
+     * @param string $content The post content.
+     * @return string Unchanged content.
+     */
+    public function yarppBridgeSwapId( $content ) {
+        global $post;
+        
+        // Only act on headless posts (negative IDs).
+        if ( ! is_object( $post ) || $post->ID >= 0 ) {
+            return $content;
+        }
+        
+        // Only if YARPP is active.
+        if ( ! class_exists( 'YARPP' ) ) {
+            return $content;
+        }
+        
+        // Look up real DB post by slug + type.
+        global $wpdb;
+        $real_id = $wpdb->get_var( $wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} WHERE post_name = %s AND post_type = %s AND post_status = 'publish' LIMIT 1",
+            $post->post_name,
+            $post->post_type
+        ) );
+        
+        if ( $real_id ) {
+            $this->yarppOriginalId = $post->ID;
+            $post->ID = (int) $real_id;
+        }
+        
+        return $content;
+    }
+    
+    /**
+     * YARPP Bridge: Restore original headless post ID (runs at priority 1201,
+     * just after YARPP's the_content filter at priority 1200).
+     *
+     * @param string $content The post content (now with YARPP appended).
+     * @return string Unchanged content.
+     */
+    public function yarppBridgeRestoreId( $content ) {
+        global $post;
+        
+        if ( $this->yarppOriginalId !== null && is_object( $post ) ) {
+            $post->ID = $this->yarppOriginalId;
+            $this->yarppOriginalId = null;
+        }
+        
+        return $content;
     }
     
     /**
