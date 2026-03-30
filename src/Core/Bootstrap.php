@@ -162,10 +162,15 @@ class Bootstrap {
         
         // YARPP compatibility: headless posts have negative IDs that don't exist
         // in wp_posts, so YARPP's SQL queries return 0 results. This bridge
-        // temporarily swaps the global $post->ID to the real DB ID (by slug+type)
-        // before YARPP's the_content filter runs (priority 1200).
+        // temporarily swaps the global $post->ID to the real DB ID (by slug+type).
+        //
+        // Two layers:
+        // 1. the_content (pri 1199/1201): wraps YARPP auto-display (pri 1200)
+        // 2. wp action: swaps main post ID before template renders (covers
+        //    YARPP sidebar widget which calls display_related(null) → get_the_ID())
         add_filter('the_content', [$this, 'yarppBridgeSwapId'], 1199);
         add_filter('the_content', [$this, 'yarppBridgeRestoreId'], 1201);
+        add_action('wp', [$this, 'yarppBridgeOnWp']);
     }
     
     /**
@@ -605,12 +610,19 @@ class Bootstrap {
     private $yarppOriginalId = null;
     
     /**
-     * YARPP Bridge: Swap headless post ID → real DB ID (runs at priority 1199,
-     * just before YARPP's the_content filter at priority 1200).
+     * YARPP Bridge: Swap headless post ID → real DB ID.
      *
-     * YARPP uses get_the_ID() which returns the global $post->ID. For headless
-     * posts this is negative (no DB row), making YARPP's SQL queries return 0.
-     * This bridge looks up the real DB post by slug+type and temporarily swaps it.
+     * This runs at the_content priority 1199 (before YARPP at 1200) to handle
+     * auto-display. For the YARPP sidebar widget, we also hook wp action to
+     * swap the main queried post's ID before the entire template renders.
+     *
+     * Strategy:
+     * 1. On 'wp' action (after query is parsed), if main post is headless,
+     *    look up real DB ID by slug+type and store for later use.
+     * 2. On 'the_content' at 1199, swap global $post->ID → real DB ID.
+     * 3. On 'the_content' at 1201, restore original negative ID.
+     * 4. YARPP widget also calls display_related(null) which uses get_the_ID(),
+     *    so we also filter 'the_posts' to set _yarpp_real_id on each headless post.
      *
      * @param string $content The post content.
      * @return string Unchanged content.
@@ -628,13 +640,8 @@ class Bootstrap {
             return $content;
         }
         
-        // Look up real DB post by slug + type.
-        global $wpdb;
-        $real_id = $wpdb->get_var( $wpdb->prepare(
-            "SELECT ID FROM {$wpdb->posts} WHERE post_name = %s AND post_type = %s AND post_status = 'publish' LIMIT 1",
-            $post->post_name,
-            $post->post_type
-        ) );
+        // Look up real DB post by slug + type (cached in post property).
+        $real_id = $this->getYarppRealId( $post );
         
         if ( $real_id ) {
             $this->yarppOriginalId = $post->ID;
@@ -660,6 +667,63 @@ class Bootstrap {
         }
         
         return $content;
+    }
+    
+    /**
+     * Look up the real database post ID for a headless post (by slug + type).
+     * Caches result on the post object as _yarpp_real_id.
+     *
+     * @param \WP_Post $post The headless post object.
+     * @return int|null Real DB post ID, or null if not found.
+     */
+    private function getYarppRealId( $post ) {
+        // Check cached value first.
+        if ( isset( $post->_yarpp_real_id ) ) {
+            return $post->_yarpp_real_id ?: null;
+        }
+        
+        global $wpdb;
+        $real_id = $wpdb->get_var( $wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} WHERE post_name = %s AND post_type = %s AND post_status = 'publish' LIMIT 1",
+            $post->post_name,
+            $post->post_type
+        ) );
+        
+        // Cache on the post object (survives for this request).
+        $post->_yarpp_real_id = $real_id ? (int) $real_id : 0;
+        
+        return $real_id ? (int) $real_id : null;
+    }
+    
+    /**
+     * YARPP Bridge: On 'wp' action, if we're on a singular headless post,
+     * swap the queried object's ID so that YARPP sidebar widget can find
+     * related posts. The original ID is restored after wp_footer.
+     */
+    public function yarppBridgeOnWp() {
+        if ( ! is_singular() || ! class_exists( 'YARPP' ) ) {
+            return;
+        }
+        
+        global $post;
+        if ( ! is_object( $post ) || $post->ID >= 0 ) {
+            return;
+        }
+        
+        $real_id = $this->getYarppRealId( $post );
+        if ( $real_id ) {
+            $this->yarppOriginalId = $post->ID;
+            $post->ID = (int) $real_id;
+            
+            // Restore after the entire page is rendered (sidebar widgets done by then).
+            add_action( 'wp_footer', function() {
+                global $post;
+                if ( $this->yarppOriginalId !== null && is_object( $post ) ) {
+                    $post->ID = $this->yarppOriginalId;
+                    $this->yarppOriginalId = null;
+                }
+            }, 9999 );
+        }
     }
     
     /**
