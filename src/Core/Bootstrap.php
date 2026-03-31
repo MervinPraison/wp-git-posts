@@ -159,18 +159,6 @@ class Bootstrap {
             $autoExporter = new \PraisonPress\Export\AutoExporter();
             $autoExporter->register();
         }
-        
-        // YARPP compatibility: headless posts have negative IDs that don't exist
-        // in wp_posts, so YARPP's SQL queries return 0 results. This bridge
-        // temporarily swaps the global $post->ID to the real DB ID (by slug+type).
-        //
-        // Two layers:
-        // 1. the_content (pri 1199/1201): wraps YARPP auto-display (pri 1200)
-        // 2. wp action: swaps main post ID before template renders (covers
-        //    YARPP sidebar widget which calls display_related(null) → get_the_ID())
-        add_filter('the_content', [$this, 'yarppBridgeSwapId'], 1199);
-        add_filter('the_content', [$this, 'yarppBridgeRestoreId'], 1201);
-        add_action('wp', [$this, 'yarppBridgeOnWp']);
     }
     
     /**
@@ -505,6 +493,7 @@ class Bootstrap {
                     $query->get('name') ?: 'archive'
                 ));
             }
+            $this->resolveRealPostIds($file_posts);
             $this->registerPostsMeta($file_posts);
             return $file_posts;
         }
@@ -536,8 +525,63 @@ class Bootstrap {
             }
         }
         
+        $this->resolveRealPostIds($merged);
         $this->registerPostsMeta($merged);
         return $merged;
+    }
+    
+    /**
+     * Resolve real database IDs for headless posts.
+     *
+     * When a headless post also exists in MySQL (imported via WP All Import,
+     * REST API, or wp-admin), the synthetic negative ID breaks all WordPress
+     * functions that depend on post ID: get_the_terms(), YARPP, comments, etc.
+     *
+     * This method replaces negative IDs with the real positive DB ID when found,
+     * so all existing theme features (artist display, related posts) continue
+     * working exactly as they did before the headless migration.
+     *
+     * @param array &$posts Array of WP_Post objects (modified in place).
+     */
+    private function resolveRealPostIds(array &$posts): void {
+        global $wpdb;
+        
+        foreach ($posts as $post) {
+            if (!is_object($post) || $post->ID >= 0 || empty($post->post_name)) {
+                continue;
+            }
+            
+            $slug      = $post->post_name;
+            $post_type = $post->post_type;
+            $cache_key = "praison_realid_{$post_type}_{$slug}";
+            
+            $real_id = wp_cache_get($cache_key, 'praisonpress');
+            if ($real_id === false) {
+                $real_id = (int) $wpdb->get_var($wpdb->prepare(
+                    "SELECT ID FROM {$wpdb->posts} WHERE post_name = %s AND post_type = %s AND post_status = 'publish' LIMIT 1",
+                    $slug,
+                    $post_type
+                ));
+                // Cache the result (0 = not in DB, positive = real ID)
+                wp_cache_set($cache_key, $real_id, 'praisonpress', 3600);
+            }
+            
+            if ($real_id > 0) {
+                $old_id    = $post->ID;
+                $post->ID  = $real_id;
+                
+                // Migrate any virtual meta registered under the old negative ID
+                if (isset(self::$virtualMeta[$old_id])) {
+                    self::$virtualMeta[$real_id] = self::$virtualMeta[$old_id];
+                    // Also update the absint'd old key
+                    $abs_old = abs($old_id);
+                    if (isset(self::$virtualMeta[$abs_old])) {
+                        unset(self::$virtualMeta[$abs_old]);
+                    }
+                    unset(self::$virtualMeta[$old_id]);
+                }
+            }
+        }
     }
     
     /**
@@ -600,129 +644,6 @@ class Bootstrap {
             if ( ! empty( $meta ) ) {
                 self::registerVirtualMeta( $post->ID, $meta );
             }
-        }
-    }
-    
-    /**
-     * Saved original post ID before YARPP swap.
-     * @var int|null
-     */
-    private $yarppOriginalId = null;
-    
-    /**
-     * YARPP Bridge: Swap headless post ID → real DB ID.
-     *
-     * This runs at the_content priority 1199 (before YARPP at 1200) to handle
-     * auto-display. For the YARPP sidebar widget, we also hook wp action to
-     * swap the main queried post's ID before the entire template renders.
-     *
-     * Strategy:
-     * 1. On 'wp' action (after query is parsed), if main post is headless,
-     *    look up real DB ID by slug+type and store for later use.
-     * 2. On 'the_content' at 1199, swap global $post->ID → real DB ID.
-     * 3. On 'the_content' at 1201, restore original negative ID.
-     * 4. YARPP widget also calls display_related(null) which uses get_the_ID(),
-     *    so we also filter 'the_posts' to set _yarpp_real_id on each headless post.
-     *
-     * @param string $content The post content.
-     * @return string Unchanged content.
-     */
-    public function yarppBridgeSwapId( $content ) {
-        global $post;
-        
-        // Only act on headless posts (negative IDs).
-        if ( ! is_object( $post ) || $post->ID >= 0 ) {
-            return $content;
-        }
-        
-        // Only if YARPP is active.
-        if ( ! class_exists( 'YARPP' ) ) {
-            return $content;
-        }
-        
-        // Look up real DB post by slug + type (cached in post property).
-        $real_id = $this->getYarppRealId( $post );
-        
-        if ( $real_id ) {
-            $this->yarppOriginalId = $post->ID;
-            $post->ID = (int) $real_id;
-        }
-        
-        return $content;
-    }
-    
-    /**
-     * YARPP Bridge: Restore original headless post ID (runs at priority 1201,
-     * just after YARPP's the_content filter at priority 1200).
-     *
-     * @param string $content The post content (now with YARPP appended).
-     * @return string Unchanged content.
-     */
-    public function yarppBridgeRestoreId( $content ) {
-        global $post;
-        
-        if ( $this->yarppOriginalId !== null && is_object( $post ) ) {
-            $post->ID = $this->yarppOriginalId;
-            $this->yarppOriginalId = null;
-        }
-        
-        return $content;
-    }
-    
-    /**
-     * Look up the real database post ID for a headless post (by slug + type).
-     * Caches result on the post object as _yarpp_real_id.
-     *
-     * @param \WP_Post $post The headless post object.
-     * @return int|null Real DB post ID, or null if not found.
-     */
-    private function getYarppRealId( $post ) {
-        // Check cached value first.
-        if ( isset( $post->_yarpp_real_id ) ) {
-            return $post->_yarpp_real_id ?: null;
-        }
-        
-        global $wpdb;
-        $real_id = $wpdb->get_var( $wpdb->prepare(
-            "SELECT ID FROM {$wpdb->posts} WHERE post_name = %s AND post_type = %s AND post_status = 'publish' LIMIT 1",
-            $post->post_name,
-            $post->post_type
-        ) );
-        
-        // Cache on the post object (survives for this request).
-        $post->_yarpp_real_id = $real_id ? (int) $real_id : 0;
-        
-        return $real_id ? (int) $real_id : null;
-    }
-    
-    /**
-     * YARPP Bridge: On 'wp' action, if we're on a singular headless post,
-     * swap the queried object's ID so that YARPP sidebar widget can find
-     * related posts. The original ID is restored after wp_footer.
-     */
-    public function yarppBridgeOnWp() {
-        if ( ! is_singular() || ! class_exists( 'YARPP' ) ) {
-            return;
-        }
-        
-        global $post;
-        if ( ! is_object( $post ) || $post->ID >= 0 ) {
-            return;
-        }
-        
-        $real_id = $this->getYarppRealId( $post );
-        if ( $real_id ) {
-            $this->yarppOriginalId = $post->ID;
-            $post->ID = (int) $real_id;
-            
-            // Restore after the entire page is rendered (sidebar widgets done by then).
-            add_action( 'wp_footer', function() {
-                global $post;
-                if ( $this->yarppOriginalId !== null && is_object( $post ) ) {
-                    $post->ID = $this->yarppOriginalId;
-                    $this->yarppOriginalId = null;
-                }
-            }, 9999 );
         }
     }
     
