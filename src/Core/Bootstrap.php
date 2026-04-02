@@ -384,6 +384,18 @@ class Bootstrap {
             return $posts;
         }
         
+        // Never intercept YARPP (Yet Another Related Posts Plugin) queries.
+        // YARPP uses internal WP_Query calls to compute relatedness scores via
+        // SQL JOINs against the posts table. If we intercept these and return
+        // synthetic file-based posts, YARPP can't match them against taxonomy
+        // tables, resulting in corrupted score=0 cache entries.
+        if (!empty($query->yarpp_cache_type) || 
+            !empty($query->is_yarpp) || 
+            $query->get('yarpp_query') ||
+            $query->get('suppress_filters')) {
+            return $posts;
+        }
+        
         // Check if file-based content is enabled in site-config.ini
         if (!$this->isContentEnabled()) {
             return $posts;
