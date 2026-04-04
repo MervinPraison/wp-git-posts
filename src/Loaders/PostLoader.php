@@ -280,6 +280,15 @@ class PostLoader {
         // Parse markdown content to HTML
         $content = $this->parser->parse($parsed['content']);
         
+        // Fallback to custom fields if main content is empty
+        if (empty(trim(strip_tags($content)))) {
+            if (!empty($metadata['custom_fields']['ta_content'])) {
+                $content = $metadata['custom_fields']['ta_content'];
+            } elseif (!empty($metadata['custom_fields']['en_content'])) {
+                $content = $metadata['custom_fields']['en_content'];
+            }
+        }
+        
         // Get author ID
         $author_id = $this->getUserIdByLogin($metadata['author'] ?? 'admin');
         
