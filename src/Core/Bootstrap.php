@@ -86,6 +86,15 @@ class Bootstrap {
         // Intercept get_post_meta() for virtual (negative-ID) headless posts
         add_filter('get_post_metadata', [$this, 'interceptVirtualMeta'], 10, 4);
         
+        // G-D: Invalidate praison_realid_* cache when a DB twin is created/updated/deleted
+        add_action('save_post',    [$this, 'invalidateRealIdCache'], 10, 1);
+        add_action('deleted_post', [$this, 'invalidateRealIdCache'], 10, 1);
+        
+        // G-H: When YARPP is asked to display related for a negative (file-only)
+        // reference ID, short-circuit with an empty result rather than letting
+        // YARPP write to row 0 of wp_yarpp_related_cache (BIGINT UNSIGNED column).
+        add_filter('yarpp_results', [$this, 'guardYarppNegativeRef'], 10, 2);
+        
         // Register Settings page in admin
         if (is_admin()) {
             new ExportPage();
@@ -205,12 +214,41 @@ class Bootstrap {
             return $value;
         }
         
+        // G-F: Never shadow WordPress / plugin internal meta keys, even if
+        // a YAML author accidentally redefines them. These keys MUST come from
+        // the database (or from the plugin that owns them) so YARPP, comments,
+        // featured images, and edit locks keep working when a DB twin exists.
+        static $reservedPrefixes = null;
+        if ( $reservedPrefixes === null ) {
+            $reservedPrefixes = [
+                '_yarpp_',         // YARPP related-posts cache
+                '_edit_lock',
+                '_edit_last',
+                '_thumbnail_id',
+                '_wp_',            // WordPress core internal
+                '_oembed_',
+                '_yoast_',         // Yoast SEO
+                '_elementor_',
+                '_jetpack_',
+            ];
+        }
+        if ( ! empty( $meta_key ) ) {
+            foreach ( $reservedPrefixes as $prefix ) {
+                if ( strpos( $meta_key, $prefix ) === 0 ) {
+                    return $value;
+                }
+            }
+        }
+        
         $meta = self::$virtualMeta[ $post_id ];
         
         // Return all meta if no specific key requested.
         if ( empty( $meta_key ) ) {
             $result = [];
             foreach ( $meta as $k => $v ) {
+                if ( $this->isReservedMetaKey( (string) $k, $reservedPrefixes ) ) {
+                    continue;
+                }
                 $result[ $k ] = [ $v ];
             }
             return $result;
@@ -223,6 +261,53 @@ class Bootstrap {
         
         // Key not in our registry — fall through to DB.
         return $value;
+    }
+    
+    /**
+     * G-F helper: check if a meta key is in the reserved-prefix denylist.
+     */
+    private function isReservedMetaKey( string $key, array $reservedPrefixes ): bool {
+        foreach ( $reservedPrefixes as $prefix ) {
+            if ( strpos( $key, $prefix ) === 0 ) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * G-D: Drop the cached real-ID lookup for a slug whenever its DB twin
+     * changes. Without this, the 1-hour TTL would mask new/removed twins.
+     *
+     * @param int $post_id WordPress post ID just saved or deleted.
+     */
+    public function invalidateRealIdCache( $post_id ): void {
+        $post_id = (int) $post_id;
+        if ( $post_id <= 0 ) {
+            return;
+        }
+        $post = get_post( $post_id );
+        if ( ! $post || empty( $post->post_name ) ) {
+            return;
+        }
+        wp_cache_delete( "praison_realid_{$post->post_type}_{$post->post_name}", 'praisonpress' );
+    }
+    
+    /**
+     * G-H: YARPP cannot reference a negative (file-only) post ID — its cache
+     * tables use BIGINT UNSIGNED for `reference_ID`, which would coerce a
+     * negative value to 0 and corrupt cache row 0. Return an empty result
+     * so YARPP renders its "no related found" template safely.
+     *
+     * @param array  $results       YARPP-computed related posts.
+     * @param int    $reference_ID  Reference post ID YARPP was asked about.
+     * @return array
+     */
+    public function guardYarppNegativeRef( $results, $reference_ID = 0 ) {
+        if ( (int) $reference_ID < 0 ) {
+            return [];
+        }
+        return $results;
     }
     
     /**
@@ -384,15 +469,23 @@ class Bootstrap {
             return $posts;
         }
         
-        // Never intercept YARPP (Yet Another Related Posts Plugin) queries.
-        // YARPP uses internal WP_Query calls to compute relatedness scores via
-        // SQL JOINs against the posts table. If we intercept these and return
-        // synthetic file-based posts, YARPP can't match them against taxonomy
-        // tables, resulting in corrupted score=0 cache entries.
-        if (!empty($query->yarpp_cache_type) || 
-            !empty($query->is_yarpp) || 
-            $query->get('yarpp_query') ||
-            $query->get('suppress_filters')) {
+        // G-E: Never intercept YARPP (Yet Another Related Posts Plugin) queries.
+        // YARPP sets $query->yarpp_cache_type via YARPP_Cache::add_signature()
+        // on `pre_get_posts` (runs before posts_pre_query). Intercepting these
+        // queries with synthetic posts breaks the JOIN against wp_posts /
+        // wp_term_relationships and writes corrupted score=0 cache entries.
+        if ( ! empty( $query->yarpp_cache_type )
+            || ! empty( $query->is_yarpp )                  // legacy/forward-compat sentinel
+            || $query->get( 'yarpp_query' )                 // legacy/forward-compat sentinel
+            || ( defined( 'YARPP_VERSION' ) && property_exists( $query, 'yarpp' ) )
+            || $query->get( 'suppress_filters' )
+        ) {
+            return $posts;
+        }
+        
+        // G-E: Generic extension point — let any plugin/theme veto injection
+        // for queries we don't know about. Filters return TRUE to skip.
+        if ( apply_filters( 'praison_skip_injection', false, $query ) ) {
             return $posts;
         }
         
@@ -558,41 +651,82 @@ class Bootstrap {
     private function resolveRealPostIds(array &$posts): void {
         global $wpdb;
         
-        foreach ($posts as $post) {
-            if (!is_object($post) || $post->ID >= 0 || empty($post->post_name)) {
+        // G-D: Two-phase resolve — first read all cached IDs, then issue ONE
+        // batched IN() query for the cache misses. On archive pages this turns
+        // N round-trips into a single round-trip on cold cache.
+        $unresolved = []; // post_type => [ slug => post object ]
+        $cache_map  = []; // "type|slug" => cache_key
+        
+        foreach ( $posts as $post ) {
+            if ( ! is_object( $post ) || $post->ID >= 0 || empty( $post->post_name ) ) {
                 continue;
             }
-            
             $slug      = $post->post_name;
             $post_type = $post->post_type;
             $cache_key = "praison_realid_{$post_type}_{$slug}";
+            $cache_map[ "{$post_type}|{$slug}" ] = $cache_key;
             
-            $real_id = wp_cache_get($cache_key, 'praisonpress');
-            if ($real_id === false) {
-                $real_id = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT ID FROM {$wpdb->posts} WHERE post_name = %s AND post_type = %s AND post_status = 'publish' LIMIT 1",
-                    $slug,
-                    $post_type
-                ));
-                // Cache the result (0 = not in DB, positive = real ID)
-                wp_cache_set($cache_key, $real_id, 'praisonpress', 3600);
+            $real_id = wp_cache_get( $cache_key, 'praisonpress' );
+            if ( $real_id === false ) {
+                $unresolved[ $post_type ][ $slug ] = $post;
+            } elseif ( (int) $real_id > 0 ) {
+                $this->applyRealId( $post, (int) $real_id );
             }
-            
-            if ($real_id > 0) {
-                $old_id    = $post->ID;
-                $post->ID  = $real_id;
-                
-                // Migrate any virtual meta registered under the old negative ID
-                if (isset(self::$virtualMeta[$old_id])) {
-                    self::$virtualMeta[$real_id] = self::$virtualMeta[$old_id];
-                    // Also update the absint'd old key
-                    $abs_old = abs($old_id);
-                    if (isset(self::$virtualMeta[$abs_old])) {
-                        unset(self::$virtualMeta[$abs_old]);
+        }
+        
+        // Batch DB lookup: one query per distinct post_type, IN() of slugs.
+        // G-D: Drop the post_status='publish' filter — twins for draft/private
+        // headless posts must also resolve so editors see consistent IDs.
+        foreach ( $unresolved as $post_type => $slug_map ) {
+            $slugs = array_keys( $slug_map );
+            if ( empty( $slugs ) ) {
+                continue;
+            }
+            $placeholders = implode( ',', array_fill( 0, count( $slugs ), '%s' ) );
+            $sql = $wpdb->prepare(
+                "SELECT ID, post_name FROM {$wpdb->posts} "
+                . "WHERE post_type = %s AND post_name IN ($placeholders) "
+                . "AND post_status NOT IN ('auto-draft','trash','inherit')",
+                array_merge( [ $post_type ], $slugs )
+            );
+            $rows = $wpdb->get_results( $sql );
+            $resolved_slugs = [];
+            if ( $rows ) {
+                foreach ( $rows as $row ) {
+                    $real_id = (int) $row->ID;
+                    $slug    = $row->post_name;
+                    if ( $real_id > 0 && isset( $slug_map[ $slug ] ) ) {
+                        $this->applyRealId( $slug_map[ $slug ], $real_id );
+                        wp_cache_set( $cache_map[ "{$post_type}|{$slug}" ], $real_id, 'praisonpress', 3600 );
+                        $resolved_slugs[ $slug ] = true;
                     }
-                    unset(self::$virtualMeta[$old_id]);
                 }
             }
+            // Cache negative results (slug NOT in DB) so we don't re-query every page.
+            foreach ( $slugs as $slug ) {
+                if ( ! isset( $resolved_slugs[ $slug ] ) ) {
+                    wp_cache_set( $cache_map[ "{$post_type}|{$slug}" ], 0, 'praisonpress', 3600 );
+                }
+            }
+        }
+    }
+    
+    /**
+     * Swap a synthetic negative ID with the real DB ID and migrate any virtual
+     * meta registered under the old key. Extracted from resolveRealPostIds()
+     * so it can be reused by the batched path.
+     */
+    private function applyRealId( $post, int $real_id ): void {
+        $old_id   = $post->ID;
+        $post->ID = $real_id;
+        
+        if ( isset( self::$virtualMeta[ $old_id ] ) ) {
+            self::$virtualMeta[ $real_id ] = self::$virtualMeta[ $old_id ];
+            $abs_old = abs( $old_id );
+            if ( $abs_old !== $real_id && isset( self::$virtualMeta[ $abs_old ] ) ) {
+                unset( self::$virtualMeta[ $abs_old ] );
+            }
+            unset( self::$virtualMeta[ $old_id ] );
         }
     }
     

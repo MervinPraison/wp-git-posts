@@ -4,6 +4,7 @@ namespace PraisonPress\Index;
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 use PraisonPress\Parsers\FrontMatterParser;
+use PraisonPress\Storage\ShadowRowWriter;
 
 /**
  * IndexManager — Incremental _index.json operations.
@@ -80,7 +81,17 @@ class IndexManager {
             $index[] = $entry;
         }
 
-        return self::atomicWrite( $indexFile, $index, $dir );
+        $ok = self::atomicWrite( $indexFile, $index, $dir );
+
+        // G-A/G-B/G-C: keep wp_posts + wp_term_relationships in sync so YARPP,
+        // taxonomy widgets, search and sitemaps work for headless posts.
+        // wp_insert_post/wp_update_post natively fire save_post + clean_post_cache,
+        // which invalidates YARPP's _yarpp_related/_yarpp_keywords postmeta cache.
+        if ( $ok && class_exists( ShadowRowWriter::class ) ) {
+            ShadowRowWriter::upsert( $type, $entry );
+        }
+
+        return $ok;
     }
 
     /**
@@ -106,7 +117,14 @@ class IndexManager {
             return true;
         }
 
-        return self::atomicWrite( $indexFile, $index, $dir );
+        $ok = self::atomicWrite( $indexFile, $index, $dir );
+
+        // G-A: trash the matching shadow row (only if we own it).
+        if ( $ok && class_exists( ShadowRowWriter::class ) ) {
+            ShadowRowWriter::trash( $type, $slug );
+        }
+
+        return $ok;
     }
 
     /**
@@ -162,6 +180,14 @@ class IndexManager {
 
         $indexFile = $dir . '/_index.json';
         self::atomicWrite( $indexFile, $index, $dir );
+
+        // G-A/G-B: bulk-sync shadow rows for every entry. No-op when the
+        // feature is disabled (gated inside ShadowRowWriter::upsert).
+        if ( class_exists( ShadowRowWriter::class ) ) {
+            foreach ( $index as $entry ) {
+                ShadowRowWriter::upsert( $type, $entry );
+            }
+        }
 
         return count( $index );
     }
